@@ -267,6 +267,40 @@ dialog.small{width:min(460px,calc(100% - 32px))}
 .dlg footer{display:flex;gap:8px;justify-content:flex-end;padding:12px 16px;border-top:1px solid var(--rule)}
 .freq{font-size:11px;color:var(--warn);white-space:nowrap}
 .review{font-size:11px;color:var(--over)}
+/* 관리자 페이지 */
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.admin{padding-top:12px;display:flex;flex-direction:column;gap:14px}
+.atabs{display:flex;gap:2px;flex-wrap:wrap;border-bottom:1px solid var(--rule)}
+.atabs button{border:0;background:none;padding:8px 12px;border-bottom:2px solid transparent;color:var(--muted);font-weight:500}
+.atabs button[aria-selected="true"]{color:var(--accent);border-bottom-color:var(--accent)}
+#adminBody{display:flex;flex-direction:column;gap:14px}
+.asec{padding:14px;display:flex;flex-direction:column;gap:10px}
+.asec h3{font-size:14px}
+.asec .hint{margin:0;font-size:12px;color:var(--muted)}
+.arow{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.arow .push{margin-left:auto}
+.tblw{overflow-x:auto}
+table.at{width:100%;border-collapse:collapse;font-size:13px}
+table.at th,table.at td{border-bottom:1px solid var(--rule);padding:6px 8px;text-align:left;vertical-align:middle}
+table.at th{font-size:11.5px;color:var(--muted);font-weight:500;white-space:nowrap}
+table.at input[type=text]{padding:3px 7px;width:100%;min-width:7em}
+table.at select{padding:3px 6px;border:1px solid var(--rule);border-radius:var(--r);background:var(--sheet)}
+table.at tr.off td{color:var(--muted)}
+table.at .chips{display:flex;flex-wrap:wrap;gap:4px;align-items:center}
+table.at .chips input{width:11em;min-width:0;border-style:dashed;border-radius:99px;font-size:12px}
+.chip button{border:0;background:none;color:inherit;padding:0 0 0 4px;cursor:pointer}
+.why{font-size:11px;padding:1px 6px;border-radius:3px;border:1px solid var(--rule);margin-right:3px;white-space:nowrap}
+.why.inv{border-color:var(--accent);color:var(--accent)}
+.st-new{color:var(--ok)} .st-skip{color:var(--muted)} .st-warn{color:var(--warn)} .st-err{color:var(--over)}
+textarea.paste{width:100%;min-height:150px;font-family:var(--font-num);font-size:12.5px;border:1px solid var(--rule);border-radius:4px;padding:8px;background:var(--sheet);resize:vertical}
+.gitem{border-bottom:1px solid var(--rule)}
+.gitem>summary{padding:9px 0;cursor:pointer;display:flex;gap:6px;flex-wrap:wrap;align-items:baseline;list-style:none}
+.gitem>summary::-webkit-details-marker{display:none}
+.gedit{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px 12px;align-items:start;padding:4px 0 14px}
+.gedit label{color:var(--muted);font-size:12.5px;padding-top:5px}
+.gedit textarea{width:100%;border:1px solid var(--rule);border-radius:4px;padding:6px 8px;background:var(--sheet);resize:vertical;line-height:1.55}
+.gedit .arow{grid-column:1/-1}
+@media (max-width:600px){.gedit{grid-template-columns:1fr}.gedit label{padding-top:0}}
 </style>
 
 <div class="gate" id="gate" hidden>
@@ -285,6 +319,7 @@ dialog.small{width:min(460px,calc(100% - 32px))}
       <div class="label" style="padding:0 6px 4px">응시자</div>
       <nav class="tree" id="tree"></nav>
     </div>
+    <button class="leaf add" style="padding-left:6px" id="adminBtn" hidden>관리자 페이지</button>
     <div class="foot"><a href="guide.html" target="_blank" rel="noopener">사용 설명서</a><span id="adminLine"></span></div>
     <div class="foot" id="meLine" style="margin-top:0"></div>
   </aside>
@@ -341,8 +376,19 @@ dialog.small{width:min(460px,calc(100% - 32px))}
         </div>
       </section>
     </div>
+
+    <section class="admin" id="adminView" hidden>
+      <div class="atabs" id="adminTabs" role="tablist">
+        <button role="tab" data-tab="mem">동기 관리</button>
+        <button role="tab" data-tab="acl">열람 권한</button>
+        <button role="tab" data-tab="bulk">일괄 등록</button>
+        <button role="tab" data-tab="gichul">기출 검토</button>
+      </div>
+      <div id="adminBody"></div>
+    </section>
   </div>
 </div>
+<datalist id="memList"></datalist>
 
 <dialog id="cDlg">
   <form class="dlg" id="cForm">
@@ -625,6 +671,7 @@ async function boot(){
   $("#meLine").innerHTML = `${esc(DB.me.name)} (${esc(DB.me.email)})${DB.me.admin?" · 관리자":""} · <a href="#" id="logout">로그아웃</a>`;
   $("#logout").onclick = async e => { e.preventDefault(); await flush(); await sb.auth.signOut(); location.reload(); };
   $("#adminLine").innerHTML = DB.admins.length ? `<br>관리자 ${DB.admins.map(e => `<a href="mailto:${esc(e)}">${esc(e)}</a>`).join(", ")}` : "";
+  $("#adminBtn").hidden = !DB.me.admin;
   renderTree();
   const last = store.get("pe_last");
   if (last && DB.sessions.some(s => s.id === last)) openSession(last);
@@ -707,6 +754,7 @@ async function openSession(id){
   await flush();
   active = null; pendingImg = null; replacing = false;
   try { S = await call("session", {id}); } catch(e){ toast("세션을 열지 못했습니다: "+e.message); return; }
+  $("#adminView").hidden = true;
   S.ro = !canWrite(S.session);
   $("#room").classList.toggle("ro", S.ro); $("#roBar").hidden = !S.ro;
   ["#dateIn","#timeIn","#meetIn","#overall"].forEach(q => $(q).disabled = S.ro);
@@ -1221,6 +1269,354 @@ $("#dlBtn").onclick = async () => {
   try { (await makePdf()).save(pdfName()); } catch(e){ toast("PDF를 만들지 못했습니다: "+e.message); }
   b.disabled = false; b.textContent = "PDF 내려받기";
 };
+
+/* ---------- 관리자 페이지 ----------
+   권한은 DB가 막는다: pe_members·pe_candidates·pe_sessions·pe_gichul 모두 관리자(pe_is_admin)면 읽기·쓰기 가능.
+   일괄 등록·미가입 면접위원 연결만 관리자 RPC(data/pe_admin.sql)를 쓴다. */
+const ko = (a, b) => String(a).localeCompare(String(b), "ko");
+const AD = {tab:"mem", mem:[], gichul:null, memKw:"", memOff:false, aclMode:"cand", aclKw:"", aclGrp:"", aclWho:"",
+  bulk:{grp:"", field:"정보관리기술사", round:"", text:""}, pick:{}, rows:null, gKw:"", gRev:true, gOpen:new Set()};
+const actMembers = () => DB.members.slice().sort((a,b) => ko(a.name, b.name));
+const rpcMissing = m => /Could not find the function|does not exist/i.test(m) ? "DB 함수가 아직 없습니다. data/pe_admin.sql을 SQL Editor에서 먼저 실행하세요" : m;
+Object.assign(API, {
+  async adminMembers(){ return must(await sb.from("pe_members").select("email,name,role,active").order("name")); },
+});
+async function refreshDB(){ DB = await call("boot", null, {quiet:true}); renderTree(); }
+
+$("#adminBtn").onclick = async () => {
+  await flush();
+  cur = null; S = null; active = null; store.del("pe_last");
+  $("#room").hidden = true; $("#sessTools").hidden = true; $("#roBar").hidden = true; $("#blank").hidden = true;
+  $("#crumb").innerHTML = "<b>관리자 페이지</b>";
+  $("#adminView").hidden = false; $("#app").classList.remove("open");
+  renderTree(); adminTab(AD.tab);
+};
+$("#adminTabs").onclick = e => { const b = e.target.closest("[data-tab]"); if (b) adminTab(b.dataset.tab); };
+async function adminTab(t){
+  AD.tab = t;
+  document.querySelectorAll("#adminTabs [data-tab]").forEach(b => b.setAttribute("aria-selected", b.dataset.tab === t));
+  $("#memList").innerHTML = actMembers().map(m => `<option value="${esc(m.email)}">${esc(m.name)}</option>`).join("");
+  try {
+    if (t === "mem") { AD.mem = await call("adminMembers"); renderMem(); }
+    else if (t === "acl") renderAcl();
+    else if (t === "bulk") renderBulk();
+    else { if (!AD.gichul) AD.gichul = await call("gichul"); renderGichul(); }
+  } catch(e){ $("#adminBody").innerHTML = `<div class="panel empty-msg">불러오지 못했습니다: ${esc(e.message)}</div>`; }
+}
+// 검색칸은 다시 그려도 입력 중인 자리를 잃지 않게 한다
+function keepFocus(id, fn){
+  const el = document.getElementById(id), had = document.activeElement === el, pos = el ? el.selectionStart : 0;
+  fn();
+  if (had) { const n = document.getElementById(id); n.focus(); try { n.setSelectionRange(pos, pos); } catch(e){} }
+}
+
+/* 동기 관리 */
+function renderMem(){
+  const kw = AD.memKw.toLowerCase();
+  const list = AD.mem.filter(m => (AD.memOff || m.active) && (!kw || (m.name + " " + m.email).toLowerCase().includes(kw)))
+    .sort((a,b) => (b.active - a.active) || ko(a.name || a.email, b.name || b.email));
+  const act = AD.mem.filter(m => m.active).sort((a,b) => ko(a.name, b.name));
+  const ivN = e => DB.sessions.filter(s => s.interviewers.includes(e)).length;
+  const cN = e => DB.cands.filter(c => c.createdBy === e).length;
+  const plans = [...new Set(DB.sessions.map(s => s.planIv).filter(Boolean))].sort(ko);
+  $("#adminBody").innerHTML = `
+  <div class="panel asec"><h3>동기 추가</h3>
+    <div class="arow"><input type="text" id="amName" placeholder="이름" style="flex:0 1 9em"><input type="text" id="amEmail" placeholder="Google 이메일" style="flex:1 1 16em">
+      <select id="amRole" aria-label="역할"><option value="member">일반</option><option value="admin">관리자</option></select><button class="btn primary" data-a="memAdd">추가</button></div>
+    <p class="hint">네이버 주소로 로그인이 안 되는 동기는 그 사람의 Gmail로 한 줄 더 추가하세요. 내보낼 때는 삭제하지 말고 '활성'을 끕니다 (비활성은 재초대로 살아나지 않습니다).</p></div>
+  ${plans.length ? `<div class="panel asec"><h3>미가입 배정 면접위원</h3>
+    <p class="hint">배정표에 이름만 있고 아직 가입 전인 면접위원입니다. 가입한 계정을 골라 연결하면 그 이름이 붙은 세션 전부의 면접위원으로 들어갑니다.</p>
+    <div class="tblw"><table class="at"><thead><tr><th>배정 이름</th><th>세션</th><th>연결할 계정</th><th></th></tr></thead><tbody>${plans.map(p => {
+      const n = DB.sessions.filter(s => s.planIv === p).length, hit = act.filter(m => m.name === p);
+      return `<tr><td>${esc(p)}</td><td class="num">${n}</td><td><select data-plan="${esc(p)}" aria-label="${esc(p)} 연결 계정"><option value="">${hit.length ? "계정 선택" : "같은 이름 가입자 없음 · 직접 선택"}</option>${act.map(m => `<option value="${esc(m.email)}" ${hit.length === 1 && hit[0].email === m.email ? "selected" : ""}>${esc(m.name)} · ${esc(m.email)}</option>`).join("")}</select></td>
+        <td><button class="btn sm" data-a="planLink" data-p="${esc(p)}">연결</button></td></tr>`; }).join("")}</tbody></table></div></div>` : ""}
+  <div class="panel asec"><div class="arow"><h3>동기 목록</h3><span class="muted" style="font-size:12px">활성 ${act.length}명 · 전체 ${AD.mem.length}명</span>
+    <input type="search" id="amKw" class="push" placeholder="이름·이메일 검색" value="${esc(AD.memKw)}" aria-label="동기 검색">
+    <label class="muted" style="font-size:12px"><input type="checkbox" id="amOff" ${AD.memOff ? "checked" : ""}> 비활성 포함</label></div>
+    <div class="tblw"><table class="at"><thead><tr><th>이름</th><th>이메일</th><th>역할</th><th>활성</th><th>면접위원 세션</th><th>등록 응시자</th></tr></thead><tbody>
+    ${list.map(m => { const self = m.email === DB.me.email, lock = self ? ` disabled title="본인 계정은 여기서 바꿀 수 없습니다"` : "";
+      return `<tr class="${m.active ? "" : "off"}" data-em="${esc(m.email)}"><td><input type="text" data-f="name" value="${esc(m.name)}" aria-label="이름"></td><td>${esc(m.email)}</td>
+        <td><select data-f="role" aria-label="역할"${lock}><option value="member" ${m.role !== "admin" ? "selected" : ""}>일반</option><option value="admin" ${m.role === "admin" ? "selected" : ""}>관리자</option></select></td>
+        <td><input type="checkbox" data-f="active" ${m.active ? "checked" : ""} aria-label="활성"${lock}></td><td class="num">${ivN(m.email)}</td><td class="num">${cN(m.email)}</td></tr>`; }).join("")
+      || `<tr><td colspan="6" class="empty-msg">해당하는 사람이 없습니다</td></tr>`}
+    </tbody></table></div></div>`;
+}
+const ADMIN_ACT = {
+  async memAdd(){
+    const name = $("#amName").value.trim(), email = $("#amEmail").value.trim().toLowerCase(), role = $("#amRole").value;
+    if (!name) { $("#amName").focus(); return toast("이름을 입력하세요"); }
+    if (!EMAIL_RE.test(email)) { $("#amEmail").focus(); return toast("이메일 형식이 아닙니다"); }
+    const old = AD.mem.find(m => m.email === email);
+    if (old) return toast(old.active ? "이미 등록된 이메일입니다" : "비활성으로 남아 있는 이메일입니다. 목록에서 '비활성 포함'을 켜고 활성을 다시 켜세요");
+    must(await sb.from("pe_members").insert({email, name, role, active:true}));
+    AD.mem = await call("adminMembers"); await refreshDB(); renderMem(); toast(`${name} 님을 추가했습니다`);
+  },
+  async planLink(b){
+    const p = b.dataset.p, em = document.querySelector(`select[data-plan="${CSS.escape(p)}"]`).value;
+    if (!em) return toast("연결할 계정을 고르세요");
+    let n;
+    try { n = must(await sb.rpc("pe_admin_link_plan", {pname:p, pemail:em})); } catch(e){ throw new Error(rpcMissing(e.message)); }
+    await refreshDB(); renderMem(); toast(`${p} → ${nameOf(em)}: 세션 ${n}개에 면접위원으로 넣었습니다`);
+  },
+  aclMode(b){ AD.aclMode = b.dataset.m; renderAcl(); },
+  async uninv(b){
+    const c = DB.cands.find(x => x.id === b.dataset.cid); if (!c) return;
+    await saveCandPatch(c, {invited:c.invited.filter(e => e !== b.dataset.em)});
+    toast(`${nameOf(b.dataset.em)} 님의 ${c.name} 초대를 취소했습니다`);
+  },
+  async grant(){
+    const cid = $("#awCand").value; if (!cid) return toast("응시자를 고르세요");
+    const c = DB.cands.find(x => x.id === cid), em = AD.aclWho;
+    if (c.invited.includes(em)) return toast("이미 초대되어 있습니다");
+    await saveCandPatch(c, {invited:[...c.invited, em]}); toast(`${c.name} 열람 권한을 줬습니다`);
+  },
+  bulkPreview(){ AD.rows = parseBulk(); renderBulk(); },
+  async bulkRun(){
+    const rows = AD.rows = parseBulk();
+    if (rows.some(r => r.err)) { renderBulk(); return toast("빨간 줄을 먼저 고치세요"); }
+    const send = rows.filter(r => !r.skip).map(r => ({name:r.name, date:r.date, time:r.time, ivs:r.ivs, plan_iv:r.plan.join(", "),
+      grp:AD.bulk.grp.trim(), field:AD.bulk.field, round:AD.bulk.round.trim()}));
+    if (!send.length) return toast("새로 등록할 줄이 없습니다");
+    let res;
+    try { res = must(await sb.rpc("pe_admin_bulk", {p:{rows:send}})); } catch(e){ throw new Error(rpcMissing(e.message)); }
+    await refreshDB(); AD.rows = parseBulk(); renderBulk();
+    toast(`응시자 ${res.cands}명 · 세션 ${res.sessions}개 등록${res.skipped ? `, ${res.skipped}건 건너뜀` : ""}`);
+  },
+  async gsave(b){ await saveGichul(b.closest("[data-gid]"), null); },
+  async gdone(b){ await saveGichul(b.closest("[data-gid]"), false); },
+  async gdel(b){
+    if (!b.dataset.armed) { b.dataset.armed = "1"; b.textContent = "한 번 더 누르면 삭제"; setTimeout(() => { if (b.isConnected) { delete b.dataset.armed; b.textContent = "삭제"; } }, 3000); return; }
+    const id = b.closest("[data-gid]").dataset.gid;
+    const gone = must(await sb.from("pe_gichul").delete().eq("id", id).select("id"));
+    if (!gone.length) throw new Error("삭제하지 못했습니다 (권한 확인)");
+    AD.gichul = AD.gichul.filter(g => g.id !== id); GICHUL = null; renderGichul(); toast("기출문제를 삭제했습니다");
+  },
+};
+$("#adminBody").addEventListener("click", e => {
+  const b = e.target.closest("[data-a]"); if (!b || !ADMIN_ACT[b.dataset.a]) return;
+  lockBtn(b, async () => { busy(1); try { await ADMIN_ACT[b.dataset.a](b); } catch(err){ toast(err.message); } finally { busy(-1); } });
+});
+$("#adminBody").addEventListener("change", async e => {
+  const t = e.target;
+  try {
+    if (t.id === "amOff") { AD.memOff = t.checked; return renderMem(); }
+    if (AD.tab === "mem" && t.dataset.f) {
+      const em = t.closest("[data-em]").dataset.em, f = t.dataset.f, v = f === "active" ? t.checked : t.value.trim();
+      if (f === "name" && !v) { toast("이름을 비울 수 없습니다"); return renderMem(); }
+      const done = must(await sb.from("pe_members").update({[f]:v}).eq("email", em).select("email"));
+      if (!done.length) throw new Error("저장하지 못했습니다 (권한 확인)");
+      Object.assign(AD.mem.find(m => m.email === em), {[f]:v});
+      await refreshDB(); renderMem();
+      toast(f === "active" ? (v ? "다시 활성화했습니다" : "비활성으로 바꿨습니다. 이제 로그인해도 들어오지 못합니다") : "저장했습니다");
+      return;
+    }
+    if (t.id === "aclGrp") { AD.aclGrp = t.value; return renderAcl(); }
+    if (t.id === "awWho") { AD.aclWho = t.value; return renderAcl(); }
+    if (AD.tab === "acl" && t.dataset.cf) {
+      const c = DB.cands.find(x => x.id === t.closest("[data-cid]").dataset.cid), f = t.dataset.cf;
+      let v = t.value.trim(); if (f === "email") v = v.toLowerCase();
+      if (f === "email" && v && !EMAIL_RE.test(v)) { toast("이메일 형식이 아닙니다"); return renderAcl(); }
+      await saveCandPatch(c, {[f]:v}); toast("저장했습니다"); return;
+    }
+    if (AD.tab === "acl" && t.matches("[data-inv]")) return addInv(t);
+    if (AD.tab === "bulk" && t.dataset.pick !== undefined) { AD.pick[t.dataset.pick] = t.value; AD.rows = parseBulk(); return renderBulk(); }
+    if (t.id === "gRev") { AD.gRev = t.checked; return renderGichul(); }
+  } catch(err){ toast(err.message); }
+});
+$("#adminBody").addEventListener("input", e => {
+  const t = e.target;
+  if (t.id === "amKw") { AD.memKw = t.value; keepFocus("amKw", renderMem); }
+  else if (t.id === "aclKw") { AD.aclKw = t.value; keepFocus("aclKw", renderAcl); }
+  else if (t.id === "gKw") { AD.gKw = t.value; keepFocus("gKw", renderGichul); }
+  else if (t.dataset.bk) {
+    // 입력이 바뀌면 이전 미리보기는 무효. 다시 미리보기해야 등록할 수 있다
+    AD.bulk[t.dataset.bk] = t.value;
+    if (AD.rows) { AD.rows = null; $("#bkPrev").innerHTML = ""; $("#bkRun").disabled = true; }
+  }
+});
+$("#adminBody").addEventListener("keydown", e => {
+  if (e.target.matches("[data-inv]") && e.key === "Enter" && !e.isComposing) { e.preventDefault(); addInv(e.target).catch(err => toast(err.message)); }
+});
+$("#adminBody").addEventListener("toggle", e => {
+  const d = e.target; if (!d.matches || !d.matches("[data-gid]")) return;
+  d.open ? AD.gOpen.add(d.dataset.gid) : AD.gOpen.delete(d.dataset.gid);
+}, true);
+
+/* 열람 권한: 응시자 내용을 볼 수 있는 사람 = 등록자 · 초대 · 그 응시자 세션의 면접위원 · 응시자 이메일 본인 · 관리자 */
+async function saveCandPatch(c, patch){
+  const done = must(await sb.from("pe_candidates").update(patch).eq("id", c.id).select("id"));
+  if (!done.length) throw new Error("저장하지 못했습니다 (권한 확인)");
+  Object.assign(c, patch);
+  await refreshDB(); renderAcl();
+}
+// 초대 칸: 이메일이나 동기 이름. 동기 목록에 있는 사람만 넣는다 (없는 사람은 동기 관리에서 먼저 추가)
+async function addInv(input){
+  const raw = input.value.trim(); if (!raw) return;
+  const c = DB.cands.find(x => x.id === input.closest("[data-cid]").dataset.cid);
+  const hits = raw.includes("@") ? DB.members.filter(m => m.email === raw.toLowerCase()) : DB.members.filter(m => m.name === raw);
+  if (!hits.length) return toast(`동기 목록에 없습니다: ${raw}. 동기 관리 탭에서 먼저 추가하세요`);
+  if (hits.length > 1) return toast(`같은 이름이 ${hits.length}명입니다. 이메일로 입력하세요`);
+  const em = hits[0].email;
+  if (c.invited.includes(em)) { input.value = ""; return toast("이미 초대되어 있습니다"); }
+  await saveCandPatch(c, {invited:[...c.invited, em]});
+  toast(`${hits[0].name} 님을 ${c.name}에 초대했습니다`);
+  document.querySelector(`[data-cid="${CSS.escape(c.id)}"] [data-inv]`)?.focus();
+}
+function renderAcl(){
+  const mode = AD.aclMode;
+  const head = `<div class="panel asec"><div class="arow"><div class="atabs" style="border:0">
+      <button data-a="aclMode" data-m="cand" aria-selected="${mode === "cand"}">응시자 기준</button><button data-a="aclMode" data-m="who" aria-selected="${mode === "who"}">사람 기준</button></div></div>
+    <p class="hint">응시자 내용(이력카드·세션·기록)을 볼 수 있는 사람 = 등록자 · 초대받은 사람 · 그 응시자 세션의 면접위원 · 응시자 이메일 본인 · 관리자. 응시자 이름·종목·회차 목록은 동기 전원이 봅니다. 면접위원은 각 세션 화면에서 바꿉니다.</p>`;
+  if (mode === "cand") {
+    const grps = [...new Set(DB.cands.map(c => c.grp || ""))].sort((a,b) => (a === "") - (b === "") || ko(a, b));
+    const kw = AD.aclKw.toLowerCase();
+    const list = DB.cands.filter(c => (AD.aclGrp === "" || (c.grp || "") === (AD.aclGrp === "-" ? "" : AD.aclGrp)) && (!kw || c.name.toLowerCase().includes(kw)))
+      .sort((a,b) => ko(a.grp || "~", b.grp || "~") || ko(a.name, b.name));
+    $("#adminBody").innerHTML = head + `<div class="arow"><input type="search" id="aclKw" placeholder="응시자 이름 검색" value="${esc(AD.aclKw)}" aria-label="응시자 검색">
+        <select id="aclGrp" aria-label="그룹"><option value="">전체 그룹</option>${grps.map(g => `<option value="${esc(g || "-")}" ${AD.aclGrp === (g || "-") ? "selected" : ""}>${esc(g || "미분류")}</option>`).join("")}</select>
+        <span class="muted push" style="font-size:12px">${list.length}명</span></div></div>
+      <div class="panel tblw"><table class="at"><thead><tr><th>그룹</th><th>응시자</th><th>등록자</th><th>응시자 이메일</th><th>초대 (이메일·동기 이름, Enter)</th><th>세션 면접위원</th></tr></thead><tbody>
+      ${list.map(c => {
+        const ss = DB.sessions.filter(s => s.candId === c.id);
+        const ivs = [...new Set(ss.flatMap(s => s.interviewers))], plans = [...new Set(ss.map(s => s.planIv).filter(Boolean))];
+        return `<tr data-cid="${esc(c.id)}"><td><input type="text" data-cf="grp" value="${esc(c.grp)}" list="grpList" aria-label="그룹" style="min-width:6em"></td>
+          <td><b style="font-weight:500">${esc(c.name)}</b><br><small class="muted">${esc(String(c.field).replace("기술사", ""))}${c.round ? ` · ${esc(c.round)}회` : ""} · 세션 ${ss.length}</small></td>
+          <td>${esc(nameOf(c.createdBy))}</td>
+          <td><input type="text" data-cf="email" value="${esc(c.email)}" placeholder="없음" aria-label="응시자 이메일" style="min-width:12em"></td>
+          <td><div class="chips">${c.invited.map(e => `<span class="chip">${esc(nameOf(e))}<button data-a="uninv" data-cid="${esc(c.id)}" data-em="${esc(e)}" aria-label="${esc(nameOf(e))} 초대 취소" title="${esc(e)}">×</button></span>`).join("")}
+            <input type="text" data-inv list="memList" placeholder="+ 초대" aria-label="${esc(c.name)} 초대 추가"></div></td>
+          <td style="font-size:12px">${ivs.map(e => esc(nameOf(e))).join(", ")}${plans.length ? `${ivs.length ? ", " : ""}<span class="muted">${plans.map(esc).join(", ")} (미가입)</span>` : ""}${!ivs.length && !plans.length ? `<span class="muted">-</span>` : ""}</td></tr>`;
+      }).join("") || `<tr><td colspan="6" class="empty-msg">해당하는 응시자가 없습니다</td></tr>`}</tbody></table></div>`;
+    $("#grpList").innerHTML = grps.filter(Boolean).map(g => `<option value="${esc(g)}">`).join("");
+    return;
+  }
+  // 사람 기준: 한 사람이 어떤 응시자를 왜 볼 수 있는지
+  const mems = actMembers();
+  if (!AD.aclWho || !mems.some(m => m.email === AD.aclWho)) AD.aclWho = (mems[0] || {}).email || "";
+  const em = AD.aclWho, isAdm = DB.admins.includes(em);
+  const rows = DB.cands.map(c => {
+    const n = DB.sessions.filter(s => s.candId === c.id && s.interviewers.includes(em)).length;
+    const why = [c.createdBy === em && `<span class="why">등록</span>`, c.invited.includes(em) && `<span class="why inv">초대</span>`,
+      n && `<span class="why">면접위원 ${n}회</span>`, c.email === em && `<span class="why">응시자 본인</span>`].filter(Boolean);
+    return {c, why};
+  }).filter(r => r.why.length).sort((a,b) => ko(a.c.grp || "~", b.c.grp || "~") || ko(a.c.name, b.c.name));
+  const rest = DB.cands.filter(c => !rows.some(r => r.c.id === c.id)).sort((a,b) => ko(a.name, b.name));
+  $("#adminBody").innerHTML = head + `<div class="arow"><select id="awWho" aria-label="사람">${mems.map(m => `<option value="${esc(m.email)}" ${m.email === em ? "selected" : ""}>${esc(m.name)} · ${esc(m.email)}</option>`).join("")}</select>
+      <span class="muted" style="font-size:12px">${isAdm ? "관리자라 모든 응시자를 봅니다" : `응시자 ${rows.length}명 열람 가능`}</span></div>
+    ${isAdm ? "" : `<div class="arow"><select id="awCand" aria-label="열람 권한을 줄 응시자"><option value="">응시자 선택</option>${rest.map(c => `<option value="${esc(c.id)}">${esc(c.name)}${c.grp ? ` (${esc(c.grp)})` : ""}</option>`).join("")}</select><button class="btn sm" data-a="grant">초대로 열람 권한 주기</button></div>`}</div>
+    <div class="panel tblw"><table class="at"><thead><tr><th>그룹</th><th>응시자</th><th>볼 수 있는 이유</th><th></th></tr></thead><tbody>
+    ${rows.map(({c, why}) => `<tr><td>${esc(c.grp || "미분류")}</td><td>${esc(c.name)}</td><td>${why.join("")}</td>
+      <td>${c.invited.includes(em) ? `<button class="btn sm ghost" data-a="uninv" data-cid="${esc(c.id)}" data-em="${esc(em)}">초대 취소</button>` : ""}</td></tr>`).join("")
+      || `<tr><td colspan="4" class="empty-msg">${isAdm ? "관리자는 따로 표시하지 않습니다" : "볼 수 있는 응시자가 없습니다"}</td></tr>`}</tbody></table></div>`;
+}
+
+/* 일괄 등록: 엑셀에서 [응시자 | 날짜 | 시각 | 면접위원] 열을 복사해 붙여넣는다. 면접위원은 여러 명이면 쉼표로. */
+function parseDate(s){
+  const n = String(s || "").match(/\d+/g); if (!n || n.length < 2) return "";
+  let y, m, d;
+  if (n[0].length === 4 && n.length >= 3) [y, m, d] = n; else if (n[0].length <= 2) { y = String(new Date().getFullYear()); [m, d] = n; } else return "";
+  m = +m; d = +d; if (m < 1 || m > 12 || d < 1 || d > 31) return "";
+  return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+}
+const TIME_RE = /^(\d{1,2}):(\d{2})(:\d{2})?$/;
+function parseBulk(){
+  const grp = AD.bulk.grp.trim(), seen = new Set(), out = [];
+  AD.bulk.text.split(/\r?\n/).forEach((line, i) => {
+    if (!line.trim()) return;
+    const cells = line.includes("\t") ? line.split("\t").map(s => s.trim()) : line.trim().split(/\s+/);
+    const r = {no:i + 1, name:cells[0] || "", date:parseDate(cells[1]), time:"", ivs:[], plan:[], notes:[], amb:[]};
+    let k = 2; const tm = TIME_RE.exec(cells[2] || "");
+    if (tm) { r.time = `${tm[1].padStart(2, "0")}:${tm[2]}`; k = 3; }
+    if (!r.date && /날짜|일자|이름|응시자/.test(line)) return;     // 머리글 줄
+    if (!r.name) r.err = "응시자 이름 없음";
+    else if (!r.date) r.err = `날짜를 못 읽음: ${cells[1] || "(빈칸)"}`;
+    cells.slice(k).join(",").split(/[,;/·]+/).map(s => s.trim()).filter(Boolean).forEach(tok => {
+      if (tok.includes("@")) {
+        const em = tok.toLowerCase();
+        if (DB.members.some(m => m.email === em)) r.ivs.push(em); else r.err = r.err || `동기 목록에 없는 이메일: ${tok}`;
+        return;
+      }
+      const hits = DB.members.filter(m => m.name === tok);
+      if (hits.length === 1) r.ivs.push(hits[0].email);
+      else if (hits.length > 1) { if (AD.pick[tok]) r.ivs.push(AD.pick[tok]); else { r.amb.push(tok); r.err = r.err || `${tok}: 같은 이름 계정이 ${hits.length}개, 위에서 고르세요`; } }
+      else r.plan.push(tok);
+    });
+    r.ivs = [...new Set(r.ivs)];
+    if (r.plan.length) r.notes.push(`미가입 배정: ${r.plan.join(", ")}`);
+    if (r.plan.length > 1) r.notes.push("미가입이 2명 이상이면 나중에 연결 버튼이 안 맞습니다");
+    const c = DB.cands.find(x => x.name === r.name && (x.grp || "") === grp);
+    r.isNew = !c;
+    const key = r.name + "|" + r.date + "|" + r.time;
+    if (!r.err && ((c && DB.sessions.some(s => s.candId === c.id && String(s.date) === r.date && (s.time || "") === r.time)) || seen.has(key))) r.skip = true;
+    seen.add(key);
+    out.push(r);
+  });
+  return out;
+}
+function renderBulk(){
+  const b = AD.bulk, grps = [...new Set([...DB.cands, ...DB.dir].map(x => x.grp).filter(Boolean))].sort(ko);
+  const rows = AD.rows, amb = rows ? [...new Set(rows.flatMap(r => r.amb).concat(Object.keys(AD.pick)))] : [];
+  const nNew = rows ? rows.filter(r => !r.err && !r.skip).length : 0, nErr = rows ? rows.filter(r => r.err).length : 0;
+  const nCand = rows ? new Set(rows.filter(r => !r.err && !r.skip && r.isNew).map(r => r.name)).size : 0;
+  $("#adminBody").innerHTML = `<div class="panel asec"><h3>응시자·면접 일정 일괄 등록</h3>
+    <p class="hint">엑셀에서 <b>응시자 | 날짜 | 시각 | 면접위원</b> 순서의 열을 복사해 붙여넣으세요. 한 줄이 세션 하나입니다. 시각은 빼도 되고, 면접위원이 여러 명이면 쉼표로 구분합니다. 면접위원은 동기 이름이나 이메일로 적고, 가입 전인 이름은 배정 이름으로만 남았다가 동기 관리 탭에서 연결합니다. 같은 그룹의 같은 이름 응시자는 기존 응시자에 세션만 붙이고, 이미 있는 날짜·시각은 건너뜁니다.</p>
+    <div class="form2" style="padding:0;grid-template-columns:auto minmax(0,22em);justify-content:start">
+      <label for="bkGrp">그룹</label><input type="text" id="bkGrp" data-bk="grp" list="bkGrps" value="${esc(b.grp)}" placeholder="예: 140재기회"><datalist id="bkGrps">${grps.map(g => `<option value="${esc(g)}">`).join("")}</datalist>
+      <label for="bkField">종목</label><select id="bkField" data-bk="field">${["정보관리기술사", "컴퓨터시스템응용기술사", "정보통신기술사", "기타"].map(f => `<option ${f === b.field ? "selected" : ""}>${f}</option>`).join("")}</select>
+      <label for="bkRound">회차</label><input type="text" id="bkRound" data-bk="round" value="${esc(b.round)}" placeholder="예: 140">
+    </div>
+    <textarea class="paste" id="bkText" data-bk="text" placeholder="홍길동&#9;2026-10-12&#9;10:00&#9;김철수&#10;홍길동&#9;10/19&#9;10:40&#9;김철수, 이영희" aria-label="붙여넣을 표">${esc(b.text)}</textarea>
+    <div class="arow"><button class="btn" data-a="bulkPreview">미리보기</button><button class="btn primary" id="bkRun" data-a="bulkRun" ${rows && nNew && !nErr ? "" : "disabled"}>등록</button>
+      <span class="muted" style="font-size:12px">${rows ? `${rows.length}줄 · 새 세션 ${nNew}개 · 새 응시자 ${nCand}명${nErr ? ` · <span class="st-err">오류 ${nErr}줄</span>` : ""}` : "미리보기로 먼저 확인하세요"}</span></div>
+    ${amb.length ? `<div class="arow">${amb.map(n => `<label style="font-size:13px">${esc(n)} → <select data-pick="${esc(n)}"><option value="">계정 선택</option>${DB.members.filter(m => m.name === n).map(m => `<option value="${esc(m.email)}" ${AD.pick[n] === m.email ? "selected" : ""}>${esc(m.email)}</option>`).join("")}</select></label>`).join("")}</div>` : ""}
+  </div>
+  <div id="bkPrev">${rows && rows.length ? `<div class="panel tblw"><table class="at"><thead><tr><th>줄</th><th>응시자</th><th>일시</th><th>면접위원</th><th>상태</th></tr></thead><tbody>
+    ${rows.map(r => `<tr><td class="num">${r.no}</td><td>${esc(r.name)}${r.isNew && !r.err ? ` <span class="st-new" style="font-size:11px">새 응시자</span>` : ""}</td><td class="num">${esc(r.date)} ${esc(r.time)}</td>
+      <td>${r.ivs.map(e => esc(nameOf(e))).join(", ")}${r.plan.length ? `${r.ivs.length ? ", " : ""}<span class="muted">${r.plan.map(esc).join(", ")} (미가입)</span>` : ""}</td>
+      <td>${r.err ? `<span class="st-err">${esc(r.err)}</span>` : r.skip ? `<span class="st-skip">이미 있음 · 건너뜀</span>` : `<span class="st-new">등록</span>`}${r.notes.length && !r.err ? `<br><small class="st-warn">${esc(r.notes.join(" · "))}</small>` : ""}</td></tr>`).join("")}
+    </tbody></table></div>` : rows ? `<div class="panel empty-msg">읽을 줄이 없습니다</div>` : ""}</div>`;
+}
+
+/* 기출 검토 */
+const G_TYPES = ["이력", "토픽", "시사", "소양"];
+function renderGichul(){
+  const kw = AD.gKw.toLowerCase(), all = AD.gichul, nRev = all.filter(g => g.needsReview).length;
+  const list = all.filter(g => (!AD.gRev || g.needsReview) && (!kw || (g.q + " " + g.followups.join(" ") + " " + g.answer + " " + g.domain).toLowerCase().includes(kw)))
+    .sort((a,b) => (a.round - b.round) || ko(a.id, b.id));
+  $("#adminBody").innerHTML = `<div class="panel asec"><div class="arow"><h3>기출 검토</h3><span class="muted" style="font-size:12px">전체 ${all.length}건 · 검토 필요 <b class="st-err">${nRev}</b>건</span>
+      <input type="search" id="gKw" class="push" placeholder="질문·답안·분야 검색" value="${esc(AD.gKw)}" aria-label="기출 검색">
+      <label class="muted" style="font-size:12px"><input type="checkbox" id="gRev" ${AD.gRev ? "checked" : ""}> 검토 필요만</label></div>
+    <p class="hint">줄을 눌러 펼치고 고친 뒤 <b>저장</b>, 확인이 끝났으면 <b>검토 완료</b>. 꼬리질문은 한 줄에 하나씩. 바꾼 내용은 동기들의 기출문제 탐색에 바로 반영됩니다.</p></div>
+  <div class="panel asec" style="gap:0">${list.map(g => `<details class="gitem" data-gid="${esc(g.id)}" ${AD.gOpen.has(g.id) ? "open" : ""}>
+      <summary><span class="tag gichul">${g.round}회 ${esc(g.type)}</span><span class="tag">${esc(g.domain || "분야 없음")}</span>${g.needsReview ? `<span class="review">검토 필요</span>` : ""}${g.freq > 1 ? `<span class="freq">${g.freq}명</span>` : ""}<span>${esc(g.q)}</span></summary>
+      <div class="gedit">
+        <label>회차·유형·분야</label><div class="arow"><input type="text" data-g="round" value="${g.round}" style="width:5em" aria-label="회차">
+          <select data-g="type" aria-label="유형">${[...new Set([...G_TYPES, g.type].filter(Boolean))].map(t => `<option ${t === g.type ? "selected" : ""}>${esc(t)}</option>`).join("")}</select>
+          <input type="text" data-g="domain" value="${esc(g.domain)}" placeholder="분야" aria-label="분야"></div>
+        <label>질문</label><textarea data-g="q" rows="2">${esc(g.q)}</textarea>
+        <label>꼬리질문</label><textarea data-g="followups" rows="3" placeholder="한 줄에 하나">${esc(g.followups.join("\n"))}</textarea>
+        <label>모범답안</label><textarea data-g="answer" rows="8">${esc(g.answer)}</textarea>
+        <div class="arow"><span class="muted" style="font-size:11.5px">${esc(g.id)}</span>
+          <button class="btn sm ghost push" data-a="gdel" style="color:var(--over)">삭제</button>
+          <button class="btn sm" data-a="gsave">저장</button>${g.needsReview ? `<button class="btn sm primary" data-a="gdone">검토 완료</button>` : ""}</div>
+      </div></details>`).join("") || `<div class="empty-msg">${AD.gRev ? "검토 필요한 기출이 없습니다" : "조건에 맞는 기출이 없습니다"}</div>`}</div>`;
+}
+// review: null이면 검토 상태 유지, false면 검토 완료 처리
+async function saveGichul(box, review){
+  const id = box.dataset.gid, g = AD.gichul.find(x => x.id === id), v = k => box.querySelector(`[data-g="${k}"]`).value;
+  const round = parseInt(v("round"), 10), q = v("q").trim();
+  if (!q) throw new Error("질문을 비울 수 없습니다");
+  if (!round) throw new Error("회차는 숫자로 입력하세요");
+  const patch = {round, type:v("type"), domain:v("domain").trim(), q, answer:v("answer").trim(),
+    followups:v("followups").split(/\r?\n/).map(s => s.trim()).filter(Boolean)};
+  if (review === false) patch.needs_review = false;
+  const done = must(await sb.from("pe_gichul").update(patch).eq("id", id).select("id"));
+  if (!done.length) throw new Error("저장하지 못했습니다 (권한 확인)");
+  Object.assign(g, patch, review === false ? {needsReview:false} : {});
+  GICHUL = null;
+  if (review === false) AD.gOpen.delete(id);
+  renderGichul(); toast(review === false ? "검토 완료로 표시했습니다" : "저장했습니다");
+}
 boot();
 </script>
 
