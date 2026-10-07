@@ -362,6 +362,14 @@ dialog.report{width:min(1060px,calc(100% - 32px))}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script>
+// Google 로그인은 앱 안 브라우저(카카오톡·네이버·인스타 등)에서 막힌다. 카카오톡은 외부 브라우저로 넘긴다.
+(() => {
+  const ua = navigator.userAgent;
+  if (/KAKAOTALK/i.test(ua)) { location.href = "kakaotalk://web/openExternal?url=" + encodeURIComponent(location.href); return; }
+  if (/NAVER\(inapp|Instagram|FBAN|FBAV|Line\/|DaumApps|everytimeApp/i.test(ua)) window.IN_APP = true;
+})();
+</script>
+<script>
 const SB_URL = "https://gqvwejjfhpziruqvrtxo.supabase.co";
 const SB_KEY = "sb_publishable_CQAJgMjRRxUAqtQDK0F21g_7duxKLom"; // 공개 키. 권한은 DB의 RLS가 막는다
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -517,6 +525,7 @@ async function call(action, payload, opt){
   } finally { if (loud) busy(-1); }
 }
 function gate(msg, otherAccount){
+  if (window.IN_APP) msg = "앱 안 브라우저에서는 Google 로그인이 막힙니다. 오른쪽 위 메뉴에서 '다른 브라우저로 열기'(크롬·사파리)를 눌러 주세요.";
   $("#gateMsg").textContent = msg;
   $("#loginLink").textContent = otherAccount ? "다른 Google 계정으로 로그인" : "Google 계정으로 로그인";
   $("#gate").hidden = false;
