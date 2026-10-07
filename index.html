@@ -151,6 +151,7 @@ select,input[type=text],input[type=search]{background:var(--sheet);border:1px so
 .qcard details{grid-column:2/-1;font-size:13px}
 .qcard details summary{color:var(--accent);cursor:pointer;width:max-content;font-size:12px}
 .qcard details p{margin:6px 0 2px;padding:8px 10px;background:var(--accent-soft);border-radius:4px;white-space:pre-wrap}
+.qcard .q span.text[data-act]{cursor:text}
 .qedit{border:0;background:transparent;font-weight:500;padding:0;flex:1 1 20ch}
 .overall{padding:12px 14px;display:flex;flex-direction:column;gap:6px;margin-top:6px}
 .overall textarea{width:100%;border:1px solid var(--rule);background:var(--paper);border-radius:4px;padding:8px;resize:none;overflow:hidden;min-height:80px}
@@ -384,6 +385,7 @@ const ICON = {
   play:'<svg viewBox="0 0 16 16"><path d="M4 2.5v11l9-5.5z"/></svg>',
   pause:'<svg viewBox="0 0 16 16"><path d="M4 2.5h3v11H4zM9 2.5h3v11H9z"/></svg>',
   reset:'<svg viewBox="0 0 16 16"><path d="M8 2.5a5.5 5.5 0 1 1-5.2 3.7l1.4.5A4 4 0 1 0 8 4v2L4.5 3.25 8 .5z"/></svg>',
+  edit:'<svg viewBox="0 0 16 16"><path d="M11.3 1.9l2.8 2.8-8.4 8.4-3.4.6.6-3.4zM10.2 3l2.8 2.8" stroke="currentColor" stroke-width="1.3" fill="none"/></svg>',
   del:'<svg viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" fill="none"/></svg>',
 };
 
@@ -540,6 +542,7 @@ let DB = null;            // boot 결과: me, members, cands, sessions
 let cur = null;           // 열린 세션 id
 let S = null;             // {session, cards}
 let active = null;        // 측정 중인 카드 id
+let editing = null;       // 질문 글을 고치는 중인 카드 id
 let pendingImg = null;
 const imgCache = {};
 let dirty = false, saving = false, memoDirty = false;
@@ -654,7 +657,11 @@ pane.addEventListener("dragleave", e => { if (!pane.contains(e.relatedTarget)) p
 pane.addEventListener("drop", e => { pane.classList.remove("dropping"); if (e.dataTransfer.files.length) { e.preventDefault(); if (!takeImage(e.dataTransfer.files[0])) toast("이미지 파일만 올릴 수 있습니다"); } });
 document.addEventListener("paste", e => {
   if (!S) return;
-  const item = [...(e.clipboardData?.items||[])].find(i => i.type.startsWith("image/"));
+  // 한글·워드·엑셀·웹에서 글을 복사하면 글자와 함께 그림판도 클립보드에 실린다.
+  // 글자가 있거나 입력칸에 붙여넣는 중이면 사진으로 가로채지 않는다.
+  const items = [...(e.clipboardData?.items||[])];
+  if (items.some(i => i.type === "text/plain") || e.target.closest?.("input,textarea,[contenteditable]")) return;
+  const item = items.find(i => i.type.startsWith("image/"));
   if (item) { e.preventDefault(); takeImage(item.getAsFile()); toast("붙여넣은 사진을 미리보기로 띄웠습니다. 저장을 눌러 확정하세요."); }
 });
 // 큰 사진은 긴 변 1600px JPEG로 줄여서 보낸다 (Apps Script 호출 크기 제한 대비)
@@ -782,7 +789,9 @@ function renderCards(){
     const head = c.preset ? `<span class="tag preset">${c.preset==="intro"?"자기소개":"포부"}</span>` : c.src ? `<span class="tag gichul">${esc(c.src)}</span>` : "";
     const qBody = c.preset==="intro" && c.kind==="etc"
       ? `<input class="qedit" data-introetc value="${esc(c.q)}" placeholder="자기소개 방향을 입력하세요 (예: 지원 동기 중심으로)" aria-label="자기소개 질문">`
-      : c.q ? `<span class="text">${esc(c.q)}</span>` : `<input class="qedit" data-qedit placeholder="질문을 입력하세요" aria-label="질문">`;
+      : c.q && editing !== c.id ? `<span class="text" data-act="edit" title="눌러서 질문 수정">${esc(c.q)}</span>`
+      : `<input class="qedit" data-qedit value="${esc(c.q||"")}" placeholder="질문을 입력하세요" aria-label="질문">`;
+    const canEdit = c.q && editing !== c.id && !(c.preset==="intro" && c.kind==="etc");
     return `<article class="panel qcard ${run?"running":""}" data-id="${c.id}">
       <span class="grip" draggable="true" title="끌어서 순서 바꾸기" aria-label="순서 바꾸기">⋮⋮</span>
       <div class="q">${head}${qBody}</div>
@@ -790,6 +799,7 @@ function renderCards(){
         <span class="time num" data-time>${fmt(c.t)}</span>
         <button class="ib play" data-act="toggle" aria-label="${run?"일시정지":"재생"}">${run?ICON.pause:ICON.play}</button>
         <button class="ib" data-act="reset" aria-label="초기화">${ICON.reset}</button>
+        ${canEdit?`<button class="ib del" data-act="edit" aria-label="질문 수정" title="질문 수정">${ICON.edit}</button>`:""}
         <button class="ib del" data-act="del" aria-label="카드 삭제">${ICON.del}</button>
       </div>
       ${c.preset==="intro"?`<div class="kinds" role="group" aria-label="자기소개 유형">${Object.entries(INTRO_LABEL).map(([k,l]) => `<button data-kind="${k}" aria-pressed="${c.kind===k}">${l}</button>`).join("")}</div>`:""}
@@ -818,7 +828,11 @@ $("#cards").addEventListener("click", e => {
   const c = findCard(b);
   if (b.dataset.act === "toggle") active = active === c.id ? null : c.id;
   if (b.dataset.act === "reset") { c.t = 0; if (active === c.id) active = null; dirty = true; }
-  if (b.dataset.act === "del") { S.cards = S.cards.filter(x => x !== c); if (active === c.id) active = null; dirty = true; }
+  if (b.dataset.act === "edit") { editing = c.id; renderCards(); const i = document.querySelector(`[data-id="${c.id}"] [data-qedit]`); i?.focus(); i?.select(); return; }
+  if (b.dataset.act === "del") {
+    const used = c.t > 0 || c.myNote || Object.values(c.notes || {}).some(Boolean);
+    if (used && !confirm("이 카드에는 측정 시간이나 기록이 있습니다. 카드를 삭제할까요?")) return;
+    S.cards = S.cards.filter(x => x !== c); if (active === c.id) active = null; if (editing === c.id) editing = null; dirty = true; }
   renderCards();
 });
 $("#cards").addEventListener("input", e => {
@@ -828,7 +842,14 @@ $("#cards").addEventListener("input", e => {
 });
 $("#cards").addEventListener("change", e => {
   if (!e.target.matches("[data-qedit]")) return;
-  findCard(e.target).q = e.target.value.trim(); dirty = true; renderCards();
+  const c = findCard(e.target), v = e.target.value.trim();
+  if (v) c.q = v;             // 비우면 원래 질문 유지 (지우려면 X)
+  editing = null; dirty = true; renderCards();
+});
+$("#cards").addEventListener("keydown", e => {
+  if (!e.target.matches("[data-qedit]")) return;
+  if (e.key === "Enter") { e.preventDefault(); e.target.blur(); }
+  if (e.key === "Escape" && editing) { editing = null; renderCards(); }
 });
 $("#overall").oninput = e => { S.session.overall = e.target.value; grow(e.target); dirty = true; };
 // 새 카드는 포부 카드 앞에 넣어 포부가 계속 마지막에 오게 한다
