@@ -95,6 +95,18 @@ select,input[type=text],input[type=search]{background:var(--sheet);border:1px so
 .dot{width:7px;height:7px;border-radius:50%;background:var(--muted);flex:none}
 .dot.live{background:var(--ok)}
 .tree .add{color:var(--muted);padding-left:28px}
+.tree details.grp>summary{font-weight:600;font-size:12.5px;color:var(--muted);letter-spacing:.02em}
+.tree details.grp>.gin{padding-left:10px}
+.tree .leaf{white-space:nowrap}
+.tree .leaf .who{margin-left:auto;font-size:11.5px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;min-width:0}
+.tree .leaf.past{color:var(--muted)}
+.tree .leaf .ro{font-size:10.5px;color:var(--muted);border:1px solid var(--rule);border-radius:3px;padding:0 3px}
+.robar{margin:0 0 10px;padding:7px 12px;border-radius:6px;background:var(--accent-soft);color:var(--accent);font-size:13px}
+.room.ro #addBtn,.room.ro #gichulBtn,.room.ro .tags input,.room.ro .tags .chip button,.room.ro .ctrl button{display:none}
+.room.ro .grip{visibility:hidden}
+.ivs .chip.plan{background:none;border:1px dashed var(--rule);color:var(--muted)}
+.timeIn{width:7.5em}
+#verInfo{font-size:11.5px;color:var(--muted)}
 .side .foot{margin-top:auto;font-size:12px;color:var(--muted);padding:0 6px}
 
 /* 면접 화면 */
@@ -282,7 +294,7 @@ dialog.small{width:min(460px,calc(100% - 32px))}
       <button class="btn menuBtn" id="menuBtn" aria-label="응시자 목록 열기">☰</button>
       <span class="crumb" id="crumb">세션을 고르세요</span>
       <div class="right" id="sessTools" hidden>
-        <label class="label" for="dateIn">면접일</label><input type="date" class="dateIn" id="dateIn">
+        <label class="label" for="dateIn">면접일</label><input type="date" class="dateIn" id="dateIn"><input type="time" class="timeIn" id="timeIn" aria-label="면접 시각">
         <div class="ivs" id="ivs"></div>
         <div class="meet"><input type="text" id="meetIn" placeholder="Meet 링크 붙여넣기" aria-label="Meet 링크"><button class="btn sm" id="meetBtn">Meet 열기 ↗</button></div>
         <span class="save" id="saveState"></span>
@@ -292,16 +304,19 @@ dialog.small{width:min(460px,calc(100% - 32px))}
 
     <div class="blank" id="blank">왼쪽에서 응시자의 세션을 고르거나, <b>+ 응시자 추가</b>로 시작하세요.</div>
 
+    <div class="robar" id="roBar" hidden>같은 응시자의 다른 회차 기록입니다 · 읽기 전용 (요약 메모와 이력카드는 함께 씁니다)</div>
     <div class="room" id="room" hidden>
       <aside class="panel cardpane">
         <header><span class="label">이력카드</span><span class="chip" id="candChip"></span><button class="btn sm ghost" id="editCand">정보 수정</button></header>
         <div id="photoSlot"></div>
         <div class="pending" id="pending" hidden><span class="sp">새 이력카드 사진 미리보기 · 아직 저장 전</span><button class="btn sm primary" id="pendSave">저장</button><button class="btn sm" id="pendCancel">취소</button></div>
         <div class="photo-actions">
-          <label class="btn sm" for="photoIn">파일 선택</label>
+          <button class="btn sm" id="photoRep" hidden>교체</button>
+          <label class="btn sm" for="photoIn" id="photoPick">파일 선택</label>
           <input type="file" id="photoIn" accept="image/*" hidden>
           <button class="btn sm ghost" id="photoDel">사진 삭제</button>
-          <span class="muted" style="font-size:12px">끌어다 놓기 · Ctrl+V 붙여넣기 · 클릭하면 확대</span>
+          <span class="muted" style="font-size:12px" id="photoHint"></span>
+          <span id="verInfo"></span>
         </div>
         <div class="summary"><label class="label" for="sumText">요약 메모 · 면접위원이 직접 작성</label><textarea id="sumText" placeholder="이력카드에서 질문할 포인트, 지난 세션에서 본 약점 등"></textarea></div>
       </aside>
@@ -336,6 +351,7 @@ dialog.small{width:min(460px,calc(100% - 32px))}
       <label for="cField">종목</label>
       <select id="cField"><option>정보관리기술사</option><option>컴퓨터시스템응용기술사</option><option>정보통신기술사</option><option>기타</option></select>
       <label for="cRound">회차</label><input type="text" id="cRound" placeholder="예: 140">
+      <label for="cGrp">그룹</label><input type="text" id="cGrp" list="grpList" placeholder="예: 139재기회 (목록에서 고르거나 새로 입력)"><datalist id="grpList"></datalist>
       <label for="cEmail">응시자 이메일</label><input type="text" id="cEmail" placeholder="선택. 넣으면 응시자 본인도 자기 기록을 봅니다">
       <label for="cInvIn" style="align-self:start;padding-top:4px">초대</label>
       <div class="invBox"><div class="inv" id="cInv"></div>
@@ -451,37 +467,51 @@ const API = {
   async boot(){
     const [mem, cands, sess, dir] = (await Promise.all([
       sb.from("pe_members").select("email,name,role,active"),
-      sb.from("pe_candidates").select("id,name,field,round,email,memo,img_path,created_by,invited").order("created_at"),
-      sb.from("pe_sessions").select("id,cand_id,date,interviewers"),
-      sb.rpc("pe_cand_dir"),
+      sb.from("pe_candidates").select("id,name,field,round,email,memo,img_path,created_by,invited,grp").order("created_at"),
+      sb.from("pe_sessions").select("id,cand_id,date,time,interviewers,plan_iv"),
+      sb.rpc("pe_cand_dir_g"),
     ])).map(must);
     const me = mem.find(m => m.email === ME && m.active);
     if (!me) throw new Error("NOT_MEMBER:" + ME);
     return {
       me: {email:ME, name:me.name || ME.split("@")[0], admin:me.role === "admin"},
       members: mem.filter(m => m.active).map(m => ({email:m.email, name:m.name || m.email.split("@")[0]})),
-      cands: cands.map(c => ({id:c.id, name:c.name, field:c.field, round:c.round, email:c.email, memo:c.memo, hasImg:!!c.img_path, imgPath:c.img_path, createdBy:c.created_by, invited:c.invited || []})),
-      dir: dir.map(d => ({id:d.id, name:d.name, field:d.field, round:d.round, createdBy:d.created_by, invited:d.invited || []})),
-      sessions: sess.map(s => ({id:s.id, candId:s.cand_id, date:s.date, interviewers:s.interviewers})),
+      cands: cands.map(c => ({id:c.id, name:c.name, field:c.field, round:c.round, email:c.email, memo:c.memo, hasImg:!!c.img_path, imgPath:c.img_path, createdBy:c.created_by, invited:c.invited || [], grp:c.grp || ""})),
+      dir: dir.map(d => ({id:d.id, name:d.name, field:d.field, round:d.round, createdBy:d.created_by, invited:d.invited || [], grp:d.grp || ""})),
+      sessions: sess.map(s => ({id:s.id, candId:s.cand_id, date:s.date, time:s.time || "", interviewers:s.interviewers, planIv:s.plan_iv || ""})),
     };
   },
-  async candImage({id}){
-    const c = must(await sb.from("pe_candidates").select("img_path").eq("id", id).single());
-    if (!c.img_path) return "";
-    return blobToDataUrl(must(await sb.storage.from(BUCKET).download(c.img_path)));
+  async imageVers({id}){
+    return must(await sb.from("pe_cand_images").select("id,path,since").eq("cand_id", id).order("since").order("id"));
   },
-  async setImage({id, dataUrl}){
-    const old = must(await sb.from("pe_candidates").select("img_path").eq("id", id).single()).img_path;
+  async imageData({path}){
+    return blobToDataUrl(must(await sb.storage.from(BUCKET).download(path)));
+  },
+  // 같은 날짜 기준본이 이미 있으면 바꿔 끼우고, 아니면 새 기준본을 추가한다 (예전 사진은 지난 세션용으로 남긴다)
+  async setImage({id, dataUrl, since}){
     const path = `${id}/card_${Date.now()}.jpg`;
     must(await sb.storage.from(BUCKET).upload(path, await dataUrlToBlob(dataUrl), {contentType:"image/jpeg"}));
-    must(await sb.from("pe_candidates").update({img_path:path}).eq("id", id));
-    if (old) await sb.storage.from(BUCKET).remove([old]);
-    return true;
+    const same = must(await sb.from("pe_cand_images").select("id,path").eq("cand_id", id).eq("since", since));
+    must(await sb.from("pe_cand_images").insert({cand_id:id, path, since}));
+    if (same.length) {
+      must(await sb.from("pe_cand_images").delete().in("id", same.map(x => x.id)));
+      await sb.storage.from(BUCKET).remove(same.map(x => x.path));
+    }
+    return API.syncLatest({id});
   },
-  async clearImage({id}){
-    const old = must(await sb.from("pe_candidates").select("img_path").eq("id", id).single()).img_path;
-    must(await sb.from("pe_candidates").update({img_path:""}).eq("id", id));
-    if (old) await sb.storage.from(BUCKET).remove([old]);
+  async clearImage({id, verId, path}){
+    must(await sb.from("pe_cand_images").delete().eq("id", verId));
+    await sb.storage.from(BUCKET).remove([path]);
+    return API.syncLatest({id});
+  },
+  // pe_candidates.img_path는 가장 최신 기준본을 가리키게 둔다 (목록의 사진 유무 표시용)
+  async syncLatest({id}){
+    const vers = await API.imageVers({id});
+    must(await sb.from("pe_candidates").update({img_path:vers.length ? vers[vers.length-1].path : ""}).eq("id", id));
+    return vers;
+  },
+  async setTime({id, time}){
+    must(await sb.from("pe_sessions").update({time}).eq("id", id));
     return true;
   },
   // 새 응시자는 화면에서 정한 id로 들어온다. 같은 id가 또 오면(재시도·연타) 새로 만들지 않는다.
@@ -491,10 +521,10 @@ const API = {
     const isNew = !DB || !DB.cands.some(c => c.id === x.id);
     if (isNew) {
       must(await sb.from("pe_candidates").upsert({id:x.id, name:x.name, field:x.field || "", round:x.round || "",
-        email:(x.email || "").trim().toLowerCase(), invited:x.invited || [], created_by:ME}, {onConflict:"id", ignoreDuplicates:true}));
+        email:(x.email || "").trim().toLowerCase(), invited:x.invited || [], created_by:ME, grp:x.grp || ""}, {onConflict:"id", ignoreDuplicates:true}));
     } else {
       const patch = {};
-      ["name","field","round","email","memo","invited"].forEach(k => { if (k in x) patch[k] = k === "email" ? String(x[k]).trim().toLowerCase() : x[k]; });
+      ["name","field","round","email","memo","invited","grp"].forEach(k => { if (k in x) patch[k] = k === "email" ? String(x[k]).trim().toLowerCase() : x[k]; });
       must(await sb.from("pe_candidates").update(patch).eq("id", x.id));
     }
     return withBoot ? {id:x.id, boot:await API.boot()} : x.id;
@@ -522,7 +552,7 @@ const API = {
     ])).map(must);
     const notes = await notesOf(cards.map(c => c.id));
     return {
-      session: {id:s.id, candId:s.cand_id, date:s.date, interviewers:s.interviewers, meet:s.meet, overall:s.overall, createdBy:s.created_by},
+      session: {id:s.id, candId:s.cand_id, date:s.date, time:s.time || "", planIv:s.plan_iv || "", interviewers:s.interviewers, meet:s.meet, overall:s.overall, createdBy:s.created_by},
       cards: cards.map(c => ({id:c.id, q:c.q, preset:c.preset, kind:c.kind, src:c.src, followups:c.followups || [], ans:c.ans, t:c.t, tags:c.tags || [], notes:notes[c.id] || {}})),
     };
   },
@@ -569,8 +599,10 @@ let cur = null;           // 열린 세션 id
 let S = null;             // {session, cards}
 let active = null;        // 측정 중인 카드 id
 let editing = null;       // 질문 글을 고치는 중인 카드 id
-let pendingImg = null;
-const imgCache = {};
+let pendingImg = null, replacing = false;
+const imgCache = {};      // 사진 경로 → dataURL
+const VERS = {};          // 응시자 id → [{id,path,since}] (since 오름차순)
+const TREE_OPEN = {};     // 사이드바 펼침 상태 (그룹·내 일정은 기본 펼침)
 let dirty = false, saving = false, memoDirty = false;
 const cand = () => S && DB.cands.find(c => c.id === S.session.candId);
 const nameOf = email => (DB.members.find(m => m.email === email) || {}).name || email.split("@")[0];
@@ -596,19 +628,46 @@ async function boot(){
 }
 
 /* ---------- 사이드바 ---------- */
+const sKey = s => String(s.date) + (s.time || "");
+const sWhen = s => md(s.date) + (s.time ? " " + s.time : "");
+const ivNames = s => s.planIv ? s.planIv : [...new Set(s.interviewers.map(nameOf))].join(", ");
+// 이 세션에 쓸 수 있는지: 면접위원·응시자 등록자·초대받은 사람·응시자 본인·관리자. 그 밖에 같은 응시자를 맡은 면접위원은 읽기만.
+function canWrite(s){
+  const c = DB.cands.find(x => x.id === s.candId) || {};
+  const me = DB.me.email;
+  return DB.me.admin || s.interviewers.includes(me) || c.createdBy === me || (c.invited || []).includes(me) || c.email === me;
+}
 function renderTree(){
   const mine = new Set(DB.cands.map(c => c.id));
-  const locked = DB.dir.filter(d => !mine.has(d.id)).map(d => `<details><summary>${esc(d.name)}<span class="sub">초대 필요</span></summary>
-      <div class="locked">${esc(String(d.field).replace("기술사",""))}${d.round?` · ${esc(d.round)}회`:""}<br>열람하려면 ${esc(nameOf(d.createdBy))} 님에게 초대를 요청하세요</div></details>`).join("");
-  $("#tree").innerHTML = DB.cands.map(c => {
-    const ss = DB.sessions.filter(s => s.candId === c.id).sort((a,b) => String(b.date).localeCompare(a.date));
-    const open = ss.some(s => s.id === cur) ? "open" : "";
-    return `<details ${open}><summary>${esc(c.name)}<span class="sub">${ss.length}회</span></summary>
-      ${ss.map(s => `<button class="leaf" data-s="${s.id}" ${s.id===cur?'aria-current="true"':""}><span class="dot"></span>${md(s.date)} 모의면접${String(s.date) > today() ? `<span class="soon">예정</span>` : ""}</button>`).join("")}
+  const isOpen = (k, def) => TREE_OPEN[k] === undefined ? def : TREE_OPEN[k];
+  const leaf = (s, who) => `<button class="leaf ${String(s.date) < today() ? "past" : ""}" data-s="${s.id}" ${s.id===cur?'aria-current="true"':""}><span class="dot"></span>${sWhen(s)}${canWrite(s) ? "" : `<span class="ro">열람</span>`}<span class="who">${esc(who)}</span></button>`;
+  // 내가 면접위원인 세션: 날짜순
+  const myS = DB.sessions.filter(s => s.interviewers.includes(DB.me.email)).sort((a,b) => sKey(a).localeCompare(sKey(b)));
+  const left = myS.filter(s => String(s.date) >= today()).length;
+  const candName = id => (DB.cands.find(c => c.id === id) || {}).name || "";
+  const mineHtml = myS.length ? `<details class="grp" data-k="mine" ${isOpen("mine", true) ? "open" : ""}><summary>내 면접 일정<span class="sub">${left}건 남음</span></summary><div class="gin">${myS.map(s => leaf(s, candName(s.candId))).join("")}</div></details>` : "";
+  // 동명이인은 이메일 앞부분이나 등록자를 덧붙인다
+  const dupe = n => DB.cands.filter(c => c.name === n).length + DB.dir.filter(d => d.name === n && !mine.has(d.id)).length > 1;
+  const candHtml = c => {
+    const ss = DB.sessions.filter(s => s.candId === c.id).sort((a,b) => sKey(a).localeCompare(sKey(b)));
+    const k = "c:" + c.id, extra = dupe(c.name) ? (c.email ? c.email.split("@")[0] : nameOf(c.createdBy) + " 등록") : "";
+    return `<details data-k="${k}" ${isOpen(k, ss.some(s => s.id === cur)) ? "open" : ""}><summary>${esc(c.name)}${extra ? ` <small class="muted">${esc(extra)}</small>` : ""}<span class="sub">${ss.length}회</span></summary>
+      ${ss.map(s => leaf(s, ivNames(s))).join("")}
       <button class="leaf add" data-new="${c.id}">+ 새 세션</button>
       <button class="leaf add" data-edit="${c.id}">정보 수정·삭제</button></details>`;
-  }).join("") + locked + `<button class="leaf add" style="padding-left:6px" id="newCand">+ 응시자 추가</button>`;
+  };
+  const lockedHtml = d => `<details><summary>${esc(d.name)}<span class="sub">초대 필요</span></summary>
+      <div class="locked">${esc(String(d.field).replace("기술사",""))}${d.round?` · ${esc(d.round)}회`:""}<br>열람하려면 ${esc(nameOf(d.createdBy))} 님에게 초대를 요청하세요</div></details>`;
+  const locked = DB.dir.filter(d => !mine.has(d.id));
+  const groups = [...new Set([...DB.cands, ...locked].map(x => x.grp || ""))].sort((a,b) => (a === "") - (b === "") || a.localeCompare(b, "ko"));
+  $("#tree").innerHTML = mineHtml + groups.map(g => {
+    const k = "g:" + g;
+    const cs = DB.cands.filter(c => (c.grp || "") === g), ls = locked.filter(d => (d.grp || "") === g);
+    return `<details class="grp" data-k="${esc(k)}" ${isOpen(k, true) ? "open" : ""}><summary>${esc(g || "미분류")}<span class="sub">${cs.length + ls.length}명</span></summary>
+      <div class="gin">${cs.map(candHtml).join("")}${ls.map(lockedHtml).join("")}</div></details>`;
+  }).join("") + `<button class="leaf add" style="padding-left:6px" id="newCand">+ 응시자 추가</button>`;
 }
+$("#tree").addEventListener("toggle", e => { const k = e.target.dataset && e.target.dataset.k; if (k) TREE_OPEN[k] = e.target.open; }, true);
 $("#tree").onclick = async e => {
   const s = e.target.closest("[data-s]"), n = e.target.closest("[data-new]");
   if (s) { await openSession(s.dataset.s); $("#app").classList.remove("open"); }
@@ -643,8 +702,12 @@ $("#menuBtn").onclick = () => $("#app").classList.toggle("open");
 
 async function openSession(id){
   await flush();
-  active = null; pendingImg = null;
+  active = null; pendingImg = null; replacing = false;
   try { S = await call("session", {id}); } catch(e){ toast("세션을 열지 못했습니다: "+e.message); return; }
+  S.ro = !canWrite(S.session);
+  $("#room").classList.toggle("ro", S.ro); $("#roBar").hidden = !S.ro;
+  ["#dateIn","#timeIn","#meetIn","#overall"].forEach(q => $(q).disabled = S.ro);
+  $("#delSess").hidden = S.ro;
   S.cards.forEach(c => c.myNote = c.notes[DB.me.email] || "");
   cur = id; store.set("pe_last", id);
   $("#blank").hidden = true; $("#room").hidden = false; $("#sessTools").hidden = false;
@@ -655,25 +718,48 @@ async function openSession(id){
 /* ---------- 응시자 ---------- */
 function renderCand(){
   const c = cand(), s = S.session;
-  $("#crumb").innerHTML = `${esc(c.name)} › <b>${md(s.date)} 모의면접</b>`;
+  $("#crumb").innerHTML = `${esc(c.name)} › <b>${sWhen(s)} 모의면접</b>`;
   $("#candChip").textContent = `${String(c.field).replace("기술사","")}${c.round?` · ${c.round}회`:""}`;
-  const img = pendingImg || imgCache[c.id];
+  const v = curVer(), vs = VERS[c.id];
+  const img = pendingImg || (v && imgCache[v.path]);
+  const has = hasPhoto();
   const slot = $("#photoSlot");
   if (img) slot.innerHTML = `<div class="photo" data-zoom><img src="${img}" alt="${esc(c.name)} 이력카드"></div>`;
-  else if (c.hasImg && imgCache[c.id] === undefined) slot.innerHTML = `<div class="photo empty">이력카드 사진 불러오는 중...</div>`;
+  else if (has) slot.innerHTML = `<div class="photo empty">이력카드 사진 불러오는 중...</div>`;
   else slot.innerHTML = `<label class="photo empty" for="photoIn">이력카드 사진이 없습니다<br>여기로 끌어다 놓거나 Ctrl+V로 붙여넣으세요</label>`;
   $("#pending").hidden = !pendingImg;
-  $("#photoDel").hidden = !c.hasImg || !!pendingImg;
+  $("#photoDel").hidden = !v || !!pendingImg || replacing;
+  $("#photoRep").hidden = !has || !!pendingImg || replacing;
+  $("#photoPick").hidden = has && !replacing && !pendingImg;
+  $("#photoHint").textContent = replacing ? "새 사진을 끌어다 놓거나 Ctrl+V, 또는 파일 선택 · 저장하면 이 세션 날짜부터 새 기준" : has ? "클릭하면 확대 · 바꾸려면 교체" : "끌어다 놓기 · Ctrl+V 붙여넣기";
+  $("#verInfo").textContent = v && vs && vs.length > 1 ? `사진 ${vs.indexOf(v) + 1}/${vs.length}판${v.since > "2001" ? ` · ${md(v.since)}부터 기준` : " · 최초 등록본"}` : "";
   if (document.activeElement !== $("#sumText")) { $("#sumText").value = c.memo || ""; grow($("#sumText")); }
 }
+// 세션 날짜에 맞는 기준본: 그 날짜 이전(포함) 중 최신. 그보다 이른 세션이면 가장 처음 사진.
+function verFor(candId, date){
+  const vs = VERS[candId]; if (!vs || !vs.length) return null;
+  const ok = vs.filter(x => String(x.since) <= String(date));
+  return ok.length ? ok[ok.length-1] : vs[0];
+}
+const curVer = () => S && verFor(S.session.candId, S.session.date);
+const hasPhoto = () => { const c = cand(); return VERS[c.id] ? VERS[c.id].length > 0 : c.hasImg; };
 async function loadImage(){
   const c = cand();
-  if (!c.hasImg || imgCache[c.id] !== undefined) return renderCand();
-  try { imgCache[c.id] = await call("candImage", {id:c.id}); } catch(e){ imgCache[c.id] = ""; }
+  if (VERS[c.id] === undefined) {
+    try { VERS[c.id] = await call("imageVers", {id:c.id}, {quiet:true}); } catch(e){ VERS[c.id] = []; }
+  }
+  const v = curVer();
+  if (v && imgCache[v.path] === undefined) {
+    renderCand();
+    try { imgCache[v.path] = await call("imageData", {path:v.path}, {quiet:true}); } catch(e){ imgCache[v.path] = ""; }
+  }
   if (cand() && cand().id === c.id) renderCand();
 }
+// 이력카드가 이미 있으면 [교체]를 누른 뒤에만 새 사진을 받는다 (실수로 붙여넣어 덮어쓰지 않게)
+const canTake = () => !hasPhoto() || replacing;
 const takeImage = f => {
   if (!f || !f.type.startsWith("image/")) return false;
+  if (!canTake()) { toast("이력카드가 이미 있습니다. 바꾸려면 [교체]를 누르세요"); return true; }
   const r = new FileReader(); r.onload = () => { pendingImg = r.result; renderCand(); }; r.readAsDataURL(f); return true;
 };
 $("#photoIn").onchange = e => { takeImage(e.target.files[0]); e.target.value=""; };
@@ -688,7 +774,7 @@ document.addEventListener("paste", e => {
   const items = [...(e.clipboardData?.items||[])];
   if (items.some(i => i.type === "text/plain") || e.target.closest?.("input,textarea,[contenteditable]")) return;
   const item = items.find(i => i.type.startsWith("image/"));
-  if (item) { e.preventDefault(); takeImage(item.getAsFile()); toast("붙여넣은 사진을 미리보기로 띄웠습니다. 저장을 눌러 확정하세요."); }
+  if (item) { e.preventDefault(); if (!canTake()) return toast("이력카드가 이미 있습니다. 바꾸려면 [교체]를 누르세요"); takeImage(item.getAsFile()); toast("붙여넣은 사진을 미리보기로 띄웠습니다. 저장을 눌러 확정하세요."); }
 });
 // 큰 사진은 긴 변 1600px JPEG로 줄여서 보낸다 (Apps Script 호출 크기 제한 대비)
 function shrink(dataUrl){
@@ -702,13 +788,23 @@ $("#pendSave").onclick = async () => {
   const c = cand(), btn = $("#pendSave"); btn.disabled = true; btn.textContent = "저장 중...";
   try {
     const small = await shrink(pendingImg);
-    await call("setImage", {id:c.id, dataUrl:small});
-    imgCache[c.id] = small; c.hasImg = true; pendingImg = null; renderCand(); toast("이력카드 사진을 저장했습니다");
+    const since = S.session.date;
+    VERS[c.id] = await call("setImage", {id:c.id, dataUrl:small, since});
+    const v = VERS[c.id].find(x => String(x.since) === String(since)); if (v) imgCache[v.path] = small;
+    c.hasImg = true; pendingImg = null; replacing = false; renderCand();
+    toast(VERS[c.id].length > 1 ? `이력카드를 저장했습니다. ${md(since)} 세션부터 이 사진이 기준입니다` : "이력카드 사진을 저장했습니다");
   } catch(e){ toast("사진을 저장하지 못했습니다: "+e.message); }
   btn.disabled = false; btn.textContent = "저장";
 };
-$("#pendCancel").onclick = () => { pendingImg = null; renderCand(); };
-$("#photoDel").onclick = async () => { const c = cand(); try { await call("clearImage", {id:c.id}); c.hasImg = false; imgCache[c.id] = ""; renderCand(); } catch(e){ toast(e.message); } };
+$("#pendCancel").onclick = () => { pendingImg = null; replacing = false; renderCand(); };
+$("#photoRep").onclick = () => { replacing = true; renderCand(); toast("새 이력카드 사진을 끌어다 놓거나 Ctrl+V로 붙여넣으세요"); };
+$("#photoDel").onclick = async () => {
+  const c = cand(), v = curVer(); if (!v) return;
+  const n = VERS[c.id].length;
+  if (!confirm(n > 1 ? "이 세션에 보이는 이력카드 사진(이 판)만 삭제합니다. 계속할까요?" : "이력카드 사진을 삭제할까요?")) return;
+  try { VERS[c.id] = await call("clearImage", {id:c.id, verId:v.id, path:v.path}); c.hasImg = VERS[c.id].length > 0; renderCand(); loadImage(); }
+  catch(e){ toast(e.message); }
+};
 $("#photoSlot").onclick = e => {
   const p = e.target.closest("[data-zoom]"); if (!p) return;
   const z = document.createElement("div"); z.className = "zoombox"; z.innerHTML = p.innerHTML; z.onclick = () => z.remove(); document.body.appendChild(z);
@@ -742,6 +838,9 @@ function openCandDlg(c){
   $("#cTitle").textContent = c ? "응시자 정보 수정" : "응시자 추가";
   $("#cName").value = c ? c.name : ""; $("#cField").value = c ? (c.field || "정보관리기술사") : "정보관리기술사";
   $("#cRound").value = c ? c.round : ""; $("#cEmail").value = c ? (c.email || "") : "";
+  const grps = [...new Set([...DB.cands, ...DB.dir].map(x => x.grp).filter(Boolean))].sort((a,b) => a.localeCompare(b, "ko"));
+  $("#grpList").innerHTML = grps.map(g => `<option value="${esc(g)}">`).join("");
+  $("#cGrp").value = c ? (c.grp || "") : ((cand() && cand().grp) || (grps.length === 1 ? grps[0] : ""));
   invList = c ? [...c.invited] : []; invNames = {}; $("#cInvIn").value = ""; $("#cInvName").value = ""; renderInv();
   $("#cDel").hidden = !c || !(DB.me.admin || c.createdBy === DB.me.email);
   $("#cDel").textContent = "응시자 삭제"; cDelArmed = false;
@@ -766,7 +865,7 @@ $("#cDel").onclick = () => {
 };
 $("#cForm").onsubmit = e => {
   e.preventDefault();
-  const x = {name:$("#cName").value.trim(), field:$("#cField").value, round:$("#cRound").value.trim(), email:$("#cEmail").value.trim()};
+  const x = {name:$("#cName").value.trim(), field:$("#cField").value, round:$("#cRound").value.trim(), email:$("#cEmail").value.trim(), grp:$("#cGrp").value.trim()};
   x.id = editingCand ? editingCand.id : newCandId;
   if (!takeInv()) return;
   x.invited = [...invList]; x.invNames = {...invNames};
@@ -784,11 +883,20 @@ function renderSessionBar(){
   const s = S.session;
   const others = DB.members.filter(m => !s.interviewers.includes(m.email));
   $("#ivs").innerHTML = `<span class="label">면접위원</span>` +
-    s.interviewers.map(e => `<span class="chip">${esc(nameOf(e))}${e!==DB.me.email?`<button data-rm="${esc(e)}" aria-label="${esc(nameOf(e))} 빼기">×</button>`:""}</span>`).join("") +
-    (others.length ? `<button class="btn ivbtn" id="ivAdd">+ 초대</button>` : "");
+    (s.planIv ? `<span class="chip plan" title="아직 가입 전이라 배정만 표시합니다">${esc(s.planIv)} · 미가입</span>` : "") +
+    [...new Set(s.interviewers.map(nameOf))].map(n => { const es = s.interviewers.filter(e => nameOf(e) === n);
+      return `<span class="chip">${esc(n)}${!S.ro && !es.includes(DB.me.email)?`<button data-rm="${esc(es.join(","))}" aria-label="${esc(n)} 빼기">×</button>`:""}</span>`; }).join("") +
+    (others.length && !S.ro ? `<button class="btn ivbtn" id="ivAdd">+ 초대</button>` : "");
   $("#meetIn").value = s.meet || "";
   $("#dateIn").value = s.date || "";
+  $("#timeIn").value = s.time || "";
 }
+$("#timeIn").onchange = async e => {
+  const v = e.target.value; S.session.time = v;
+  const row = DB.sessions.find(x => x.id === S.session.id); if (row) row.time = v;
+  renderCand(); renderTree();
+  try { await call("setTime", {id:S.session.id, time:v}, {quiet:true}); } catch(err){ toast("시각을 저장하지 못했습니다: " + err.message); }
+};
 $("#dateIn").onchange = e => {
   const v = e.target.value; if (!v) return;
   S.session.date = v; dirty = true;
@@ -797,7 +905,7 @@ $("#dateIn").onchange = e => {
 };
 $("#ivs").addEventListener("click", e => {
   if (e.target.closest("#ivAdd")) { $("#iSearch").value = ""; renderIv(); $("#iDlg").showModal(); $("#iSearch").focus(); return; }
-  const b = e.target.closest("[data-rm]"); if (!b) return; S.session.interviewers = S.session.interviewers.filter(x => x !== b.dataset.rm); dirty = true; renderSessionBar(); renderCards();
+  const b = e.target.closest("[data-rm]"); if (!b) return; const rm = b.dataset.rm.split(","); S.session.interviewers = S.session.interviewers.filter(x => !rm.includes(x)); dirty = true; renderSessionBar(); renderCards();
 });
 // 면접위원 초대 모달: 검색 + 눌러서 넣고 빼기 (나는 항상 포함)
 function renderIv(){
@@ -859,6 +967,7 @@ function renderCards(){
     </article>`;
   }).join("") || `<div class="panel empty-msg">아직 질문 카드가 없습니다. 기출문제 탐색이나 + 질문으로 추가하세요.</div>`;
   document.querySelectorAll("#cards textarea").forEach(grow);
+  if (S.ro) document.querySelectorAll("#cards textarea, #cards input, #cards button").forEach(el => el.disabled = true);
   // 이 세션에서 쓴 태그를 자동완성 후보로
   const all = [...new Set(S.cards.flatMap(c => c.tags || []))].sort((a,b) => a.localeCompare(b, "ko"));
   $("#tagList").innerHTML = all.map(t => `<option value="${esc(t)}">`).join("");
@@ -873,6 +982,7 @@ function updateTotal(){
 }
 const findCard = el => S.cards.find(x => x.id === el.closest("[data-id]")?.dataset.id);
 $("#cards").addEventListener("click", e => {
+  if (S.ro) return;
   const k = e.target.closest("[data-kind]");
   if (k) { const c = findCard(k); c.kind = k.dataset.kind; c.q = INTRO[c.kind] || ""; dirty = true; renderCards();
     if (c.kind === "etc") document.querySelector(`[data-id="${c.id}"] [data-introetc]`)?.focus(); return; }
@@ -960,6 +1070,7 @@ setInterval(() => {
 async function flush(){
   if (saving) return;
   if (memoDirty && cand()) { memoDirty = false; call("saveCand", {cand:{id:cand().id, memo:cand().memo}}, {quiet:true}).catch(() => { memoDirty = true; }); }
+  if (S && S.ro) dirty = false;
   if (!dirty || !S) return;
   saving = true; dirty = false; setSave("저장 중...");
   const sid = S.session.id;
@@ -1033,7 +1144,7 @@ function renderReport(){
   const s = S.session, c = cand();
   const ivs = s.interviewers;
   const notesOf = x => Object.assign({}, x.notes, x.myNote ? {[DB.me.email]: x.myNote} : {});
-  const img = imgCache[c.id];
+  const rv = curVer(), img = rv && imgCache[rv.path];
   const left = img ? `<div class="imgcap"><img src="${img}" alt=""></div>` : `<div class="box" style="color:#5B6675">이력카드 사진 없음</div>`;
   const items = S.cards.filter(x => x.q).map(x => {
     const n = notesOf(x);
