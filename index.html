@@ -324,7 +324,7 @@ dialog.small{width:min(460px,calc(100% - 32px))}
       <section class="qpane">
         <div class="qhead">
           <div class="panel totalbar">
-            <div class="t"><span class="label">총 시간</span><span class="num" id="total">0:00</span></div>
+            <div class="t" title="첫 질문 시작부터 마지막 질문 종료까지"><span class="label">총 시간</span><span class="num" id="total">0:00</span></div>
             <span class="meta" id="meta"></span>
             <div class="acts">
               <button class="btn" id="gichulBtn">기출문제 탐색</button>
@@ -553,7 +553,7 @@ const API = {
     ])).map(must);
     const notes = await notesOf(cards.map(c => c.id));
     return {
-      session: {id:s.id, candId:s.cand_id, date:s.date, time:s.time || "", planIv:s.plan_iv || "", interviewers:s.interviewers, meet:s.meet, overall:s.overall, createdBy:s.created_by},
+      session: {id:s.id, candId:s.cand_id, date:s.date, time:s.time || "", planIv:s.plan_iv || "", interviewers:s.interviewers, meet:s.meet, overall:s.overall, createdBy:s.created_by, startedAt:s.started_at || "", endedAt:s.ended_at || ""},
       cards: cards.map(c => ({id:c.id, q:c.q, preset:c.preset, kind:c.kind, src:c.src, followups:c.followups || [], ans:c.ans, t:c.t, tags:c.tags || [], notes:notes[c.id] || {}})),
     };
   },
@@ -703,6 +703,7 @@ $("#sForm").onsubmit = e => {
 $("#menuBtn").onclick = () => $("#app").classList.toggle("open");
 
 async function openSession(id){
+  if (S && active) { active = null; S.session.endedAt = new Date().toISOString(); dirty = true; }  // 재던 세션을 떠나면 그 시각을 종료로
   await flush();
   active = null; pendingImg = null; replacing = false;
   try { S = await call("session", {id}); } catch(e){ toast("세션을 열지 못했습니다: "+e.message); return; }
@@ -977,7 +978,20 @@ function renderCards(){
   updateTotal();
 }
 const othersHtml = c => Object.entries(c.notes || {}).filter(([e,v]) => e !== DB.me.email && v).map(([e,v]) => `<span><b>${esc(nameOf(e))}</b> ${esc(v)}</span>`).join("");
-const total = () => S.cards.reduce((a,c) => a + (c.t||0), 0);
+// 총 시간 = 첫 질문을 시작한 때부터 마지막 질문을 멈춘 때까지 (질문 사이 쉬는 시간 포함)
+const total = () => {
+  const st = S.session.startedAt; if (!st) return 0;
+  const end = active ? Date.now() : S.session.endedAt ? Date.parse(S.session.endedAt) : Date.parse(st) + 1000 * S.cards.reduce((a,c) => a + (c.t||0), 0);
+  return Math.max(0, Math.round((end - Date.parse(st)) / 1000));
+};
+// 측정 시작·멈춤 시각을 세션에 남긴다. 모든 카드 시간을 초기화하면 총 시간도 비운다.
+function markClock(wasActive){
+  const now = new Date().toISOString();
+  if (active && !wasActive && !S.session.startedAt) S.session.startedAt = now;
+  if (!active && wasActive) S.session.endedAt = now;
+  if (!active && S.cards.every(c => !c.t)) { S.session.startedAt = ""; S.session.endedAt = ""; }
+  dirty = true;
+}
 function updateTotal(){
   $("#total").textContent = fmt(total());
   $("#meta").textContent = `질문 ${S.cards.length}개 · 답변 ${S.cards.filter(c => c.t > 0).length}개`;
@@ -991,7 +1005,7 @@ $("#cards").addEventListener("click", e => {
   const ut = e.target.closest("[data-untag]");
   if (ut) { const c = findCard(ut); c.tags = c.tags.filter(t => t !== ut.dataset.untag); dirty = true; renderCards(); return; }
   const b = e.target.closest("[data-act]"); if (!b) return;
-  const c = findCard(b);
+  const c = findCard(b), wasActive = active;
   if (b.dataset.act === "toggle") active = active === c.id ? null : c.id;
   if (b.dataset.act === "reset") { c.t = 0; if (active === c.id) active = null; dirty = true; }
   if (b.dataset.act === "edit") { editing = c.id; renderCards(); const i = document.querySelector(`[data-id="${c.id}"] [data-qedit]`); i?.focus(); i?.select(); return; }
@@ -999,7 +1013,8 @@ $("#cards").addEventListener("click", e => {
     const used = c.t > 0 || c.myNote || Object.values(c.notes || {}).some(Boolean);
     if (used && !confirm("이 카드에는 측정 시간이나 기록이 있습니다. 카드를 삭제할까요?")) return;
     S.cards = S.cards.filter(x => x !== c); if (active === c.id) active = null; if (editing === c.id) editing = null; dirty = true; }
-  renderCards();
+  if (["toggle","reset","del"].includes(b.dataset.act)) markClock(wasActive);
+  renderCards(); updateTotal();
 });
 $("#cards").addEventListener("input", e => {
   const el = e.target, c = findCard(el); if (!c) return;
@@ -1079,6 +1094,7 @@ async function flush(){
   try {
     const r = await call("saveSession", {
       id: sid, date: S.session.date, overall: S.session.overall, meet: S.session.meet, interviewers: S.session.interviewers,
+      startedAt: S.session.startedAt || "", endedAt: S.session.endedAt || "",
       cards: S.cards.map(c => ({id:c.id, q:c.q, preset:c.preset, kind:c.kind, src:c.src, followups:c.followups, ans:c.ans, t:c.t, tags:c.tags || [], myNote:c.myNote})),
     }, {quiet:true});
     // 다른 면접위원 기록만 갱신 (내 입력과 구조는 건드리지 않는다)
