@@ -227,12 +227,28 @@ dialog.report{width:min(1060px,calc(100% - 32px))}
 .save.err{color:var(--over)}
 .ivs{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
 .ivs .chip button{border:0;background:none;color:inherit;padding:0 0 0 4px;cursor:pointer}
-.ivs select{padding:3px 6px;font-size:12px}
+.ivs .ivbtn{padding:2px 9px;font-size:12px;border-radius:99px;border-style:dashed}
+dialog.small{width:min(460px,calc(100% - 32px))}
+.ivlist{max-height:min(52vh,420px);overflow-y:auto;padding:4px 8px 8px}
+.ivrow{display:flex;align-items:center;gap:10px;width:100%;padding:9px 8px;border:0;border-bottom:1px solid var(--rule);background:none;color:inherit;text-align:left;cursor:pointer;border-radius:4px}
+.ivrow:hover,.ivrow:focus-visible{background:var(--paper)}
+.ivrow .av{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;background:var(--accent-soft);color:var(--accent);font-size:12px;font-weight:600;flex:none}
+.ivrow .who{flex:1;min-width:0}
+.ivrow .who small{display:block;color:var(--muted);font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ivrow .st{font-size:12px;color:var(--muted);flex:none}
+.ivrow[aria-pressed="true"] .st{color:var(--ok);font-weight:600}
 .meet{display:flex;gap:4px}
 .meet input{width:200px;padding:4px 8px;font-size:12px}
 .blank{padding:48px 16px;text-align:center;color:var(--muted)}
 .others{grid-column:2/-1;font-size:12px;color:var(--muted);display:flex;flex-direction:column;gap:2px}
 .others b{color:var(--ink);font-weight:500}
+.tags{grid-column:2/-1;display:flex;flex-wrap:wrap;gap:4px;align-items:center}
+.tags .chip button{border:0;background:none;color:inherit;padding:0 0 0 3px;cursor:pointer}
+.tags input{border:1px dashed var(--rule);background:transparent;border-radius:99px;padding:1px 9px;font-size:12px;width:9em}
+.tags input:focus{border-style:solid;background:var(--sheet)}
+.invRow{display:flex;gap:6px;flex-wrap:wrap}
+.invRow #cInvName{flex:0 1 8em}
+.invRow #cInvIn{flex:1 1 14em}
 .fu{grid-column:2/-1;font-size:12px;color:var(--muted);margin:0;padding-left:16px}
 .form2{display:grid;grid-template-columns:auto 1fr;gap:10px 12px;align-items:center;padding:16px}
 .form2 label{color:var(--muted);font-size:13px}
@@ -323,7 +339,8 @@ dialog.report{width:min(1060px,calc(100% - 32px))}
       <label for="cEmail">응시자 이메일</label><input type="text" id="cEmail" placeholder="선택. 넣으면 응시자 본인도 자기 기록을 봅니다">
       <label for="cInvIn" style="align-self:start;padding-top:4px">초대</label>
       <div class="invBox"><div class="inv" id="cInv"></div>
-        <input type="text" id="cInvIn" placeholder="함께 볼 사람의 Google 이메일, Enter로 추가 (여러 명은 쉼표)"></div>
+        <div class="invRow"><input type="text" id="cInvName" placeholder="이름" aria-label="초대할 사람 이름">
+        <input type="text" id="cInvIn" placeholder="Google 이메일, Enter로 추가" aria-label="초대할 사람 이메일"></div></div>
     </div>
     <footer><button type="button" class="btn ghost" id="cDel" style="margin-right:auto;color:var(--over)" hidden>응시자 삭제</button><button type="button" class="btn" data-close>취소</button><button type="submit" class="btn primary">저장</button></footer>
   </form>
@@ -337,6 +354,15 @@ dialog.report{width:min(1060px,calc(100% - 32px))}
     </div>
     <footer><button type="button" class="btn" data-close>취소</button><button type="submit" class="btn primary">만들기</button></footer>
   </form>
+</dialog>
+
+<datalist id="tagList"></datalist>
+<dialog id="iDlg" class="small">
+  <div class="dlg">
+    <header><h2>면접위원 초대</h2><span class="muted" style="font-size:12px" id="iCount"></span><button class="btn ghost x" data-close>완료</button></header>
+    <div class="filters"><input type="search" id="iSearch" placeholder="이름이나 이메일로 검색" aria-label="면접위원 검색"></div>
+    <div class="ivlist" id="iList"></div>
+  </div>
 </dialog>
 
 <dialog id="gDlg">
@@ -461,7 +487,7 @@ const API = {
   // 새 응시자는 화면에서 정한 id로 들어온다. 같은 id가 또 오면(재시도·연타) 새로 만들지 않는다.
   async saveCand({cand:x, withBoot}){
     if (x.name !== undefined && !x.name) throw new Error("응시자 이름을 입력하세요");
-    if (x.invited && x.invited.length) must(await sb.rpc("pe_invite", {emails:x.invited}));
+    if (x.invited && x.invited.length) must(await sb.rpc("pe_invite", {emails:x.invited, names:x.invited.map(e => (x.invNames || {})[e] || "")}));
     const isNew = !DB || !DB.cands.some(c => c.id === x.id);
     if (isNew) {
       must(await sb.from("pe_candidates").upsert({id:x.id, name:x.name, field:x.field || "", round:x.round || "",
@@ -497,7 +523,7 @@ const API = {
     const notes = await notesOf(cards.map(c => c.id));
     return {
       session: {id:s.id, candId:s.cand_id, date:s.date, interviewers:s.interviewers, meet:s.meet, overall:s.overall, createdBy:s.created_by},
-      cards: cards.map(c => ({id:c.id, q:c.q, preset:c.preset, kind:c.kind, src:c.src, followups:c.followups || [], ans:c.ans, t:c.t, notes:notes[c.id] || {}})),
+      cards: cards.map(c => ({id:c.id, q:c.q, preset:c.preset, kind:c.kind, src:c.src, followups:c.followups || [], ans:c.ans, t:c.t, tags:c.tags || [], notes:notes[c.id] || {}})),
     };
   },
   async saveSession(p){
@@ -690,23 +716,25 @@ $("#photoSlot").onclick = e => {
 $("#sumText").oninput = e => { cand().memo = e.target.value; memoDirty = true; grow(e.target); };
 
 /* 응시자 추가·수정 */
-let editingCand = null, newCandId = null, invList = [];
+let editingCand = null, newCandId = null, invList = [], invNames = {};
 // 초대: 이메일만 넣으면 된다. 저장할 때 그 사람이 자동으로 가입된다.
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 function renderInv(){
-  $("#cInv").innerHTML = invList.map(e => `<span class="chip">${esc(DB.members.some(m => m.email === e) ? nameOf(e) + " · " + e : e)}<button type="button" data-unv="${esc(e)}" aria-label="${esc(e)} 초대 취소">×</button></span>`).join("")
+  $("#cInv").innerHTML = invList.map(e => `<span class="chip">${esc(invNames[e] ? invNames[e] + " · " + e : DB.members.some(m => m.email === e) ? nameOf(e) + " · " + e : e)}<button type="button" data-unv="${esc(e)}" aria-label="${esc(e)} 초대 취소">×</button></span>`).join("")
     || `<span class="muted" style="font-size:12px">아직 초대한 사람이 없습니다</span>`;
 }
+// 처음 초대하는 사람(아직 가입 안 한 주소)은 이름이 있어야 넣는다. 이미 가입한 사람은 이메일만으로 된다.
 function takeInv(){
-  const bad = [];
-  $("#cInvIn").value.split(/[,\s;]+/).map(x => x.trim().toLowerCase()).filter(Boolean).forEach(e => {
-    if (!EMAIL_RE.test(e)) bad.push(e);
-    else if (e !== DB.me.email && !invList.includes(e)) invList.push(e);
-  });
-  $("#cInvIn").value = bad.join(", ");
-  if (bad.length) toast("이메일 형식이 아닙니다: " + bad.join(", "));
-  renderInv();
-  return !bad.length;
+  const e = $("#cInvIn").value.trim().toLowerCase(), n = $("#cInvName").value.trim();
+  if (!e) { if (n) { toast("이메일도 입력하세요"); $("#cInvIn").focus(); return false; } return true; }
+  if (!EMAIL_RE.test(e)) { toast("이메일 형식이 아닙니다: " + e); $("#cInvIn").focus(); return false; }
+  const known = DB.members.find(m => m.email === e && m.name && m.name !== e.split("@")[0]);
+  if (!known && !n) { toast("처음 초대하는 분은 이름을 입력하세요"); $("#cInvName").focus(); return false; }
+  if (e !== DB.me.email && !invList.includes(e)) invList.push(e);
+  if (n) invNames[e] = n;
+  $("#cInvIn").value = ""; $("#cInvName").value = "";
+  renderInv(); $("#cInvName").focus();
+  return true;
 }
 function openCandDlg(c){
   editingCand = c;
@@ -714,13 +742,13 @@ function openCandDlg(c){
   $("#cTitle").textContent = c ? "응시자 정보 수정" : "응시자 추가";
   $("#cName").value = c ? c.name : ""; $("#cField").value = c ? (c.field || "정보관리기술사") : "정보관리기술사";
   $("#cRound").value = c ? c.round : ""; $("#cEmail").value = c ? (c.email || "") : "";
-  invList = c ? [...c.invited] : []; $("#cInvIn").value = ""; renderInv();
+  invList = c ? [...c.invited] : []; invNames = {}; $("#cInvIn").value = ""; $("#cInvName").value = ""; renderInv();
   $("#cDel").hidden = !c || !(DB.me.admin || c.createdBy === DB.me.email);
   $("#cDel").textContent = "응시자 삭제"; cDelArmed = false;
   $("#cDlg").showModal();
 }
 $("#editCand").onclick = () => openCandDlg(cand());
-$("#cInvIn").addEventListener("keydown", e => { if (e.key === "Enter" || e.key === ",") { e.preventDefault(); takeInv(); } });
+["cInvIn","cInvName"].forEach(id => $("#"+id).addEventListener("keydown", e => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); takeInv(); } }));
 $("#cInv").addEventListener("click", e => { const b = e.target.closest("[data-unv]"); if (b) { invList = invList.filter(x => x !== b.dataset.unv); renderInv(); } });
 let cDelArmed = false;
 $("#cDel").onclick = () => {
@@ -741,7 +769,7 @@ $("#cForm").onsubmit = e => {
   const x = {name:$("#cName").value.trim(), field:$("#cField").value, round:$("#cRound").value.trim(), email:$("#cEmail").value.trim()};
   x.id = editingCand ? editingCand.id : newCandId;
   if (!takeInv()) return;
-  x.invited = [...invList];
+  x.invited = [...invList]; x.invNames = {...invNames};
   lockBtn($("#cForm [type=submit]"), async () => {
     try {
       const r = await call("saveCand", {cand:x, withBoot:true}); $("#cDlg").close();
@@ -757,7 +785,7 @@ function renderSessionBar(){
   const others = DB.members.filter(m => !s.interviewers.includes(m.email));
   $("#ivs").innerHTML = `<span class="label">면접위원</span>` +
     s.interviewers.map(e => `<span class="chip">${esc(nameOf(e))}${e!==DB.me.email?`<button data-rm="${esc(e)}" aria-label="${esc(nameOf(e))} 빼기">×</button>`:""}</span>`).join("") +
-    (others.length ? `<select id="ivAdd" aria-label="면접위원 추가"><option value="">+ 추가</option>${others.map(m => `<option value="${esc(m.email)}">${esc(m.name)}</option>`).join("")}</select>` : "");
+    (others.length ? `<button class="btn ivbtn" id="ivAdd">+ 초대</button>` : "");
   $("#meetIn").value = s.meet || "";
   $("#dateIn").value = s.date || "";
 }
@@ -767,8 +795,28 @@ $("#dateIn").onchange = e => {
   const row = DB.sessions.find(x => x.id === S.session.id); if (row) row.date = v;
   renderCand(); renderTree();
 };
-$("#ivs").addEventListener("click", e => { const b = e.target.closest("[data-rm]"); if (!b) return; S.session.interviewers = S.session.interviewers.filter(x => x !== b.dataset.rm); dirty = true; renderSessionBar(); });
-$("#ivs").addEventListener("change", e => { if (e.target.id !== "ivAdd" || !e.target.value) return; S.session.interviewers.push(e.target.value); dirty = true; renderSessionBar(); renderCards(); });
+$("#ivs").addEventListener("click", e => {
+  if (e.target.closest("#ivAdd")) { $("#iSearch").value = ""; renderIv(); $("#iDlg").showModal(); $("#iSearch").focus(); return; }
+  const b = e.target.closest("[data-rm]"); if (!b) return; S.session.interviewers = S.session.interviewers.filter(x => x !== b.dataset.rm); dirty = true; renderSessionBar(); renderCards();
+});
+// 면접위원 초대 모달: 검색 + 눌러서 넣고 빼기 (나는 항상 포함)
+function renderIv(){
+  const kw = $("#iSearch").value.trim().toLowerCase(), on = S.session.interviewers;
+  const list = DB.members.filter(m => m.email !== DB.me.email && (!kw || (m.name + " " + m.email).toLowerCase().includes(kw)))
+    .sort((a,b) => (on.includes(b.email) - on.includes(a.email)) || a.name.localeCompare(b.name, "ko"));
+  $("#iCount").textContent = `${on.length}명 선택됨`;
+  $("#iList").innerHTML = list.map(m => { const p = on.includes(m.email);
+    return `<button class="ivrow" data-iv="${esc(m.email)}" aria-pressed="${p}"><span class="av">${esc(m.name.slice(0,1))}</span><span class="who">${esc(m.name)}<small>${esc(m.email)}</small></span><span class="st">${p?"✓ 초대됨":"초대"}</span></button>`;
+  }).join("") || `<div class="empty-msg">검색 결과가 없습니다.</div>`;
+}
+$("#iSearch").addEventListener("input", renderIv);
+$("#iSearch").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); $("#iList [data-iv]")?.click(); } });
+$("#iList").onclick = e => {
+  const b = e.target.closest("[data-iv]"); if (!b) return;
+  const em = b.dataset.iv, ivs = S.session.interviewers;
+  S.session.interviewers = ivs.includes(em) ? ivs.filter(x => x !== em) : [...ivs, em];
+  dirty = true; renderIv(); renderSessionBar(); renderCards();
+};
 $("#meetIn").oninput = e => { S.session.meet = e.target.value.trim(); dirty = true; };
 $("#meetBtn").onclick = () => { const u = S.session.meet; if (!/^https:\/\/meet\.google\.com\//.test(u)) return toast("Meet 링크(https://meet.google.com/...)를 먼저 붙여넣으세요"); window.open(u, "meet", "width=960,height=720"); };
 let delArmed = false;
@@ -803,6 +851,7 @@ function renderCards(){
         <button class="ib del" data-act="del" aria-label="카드 삭제">${ICON.del}</button>
       </div>
       ${c.preset==="intro"?`<div class="kinds" role="group" aria-label="자기소개 유형">${Object.entries(INTRO_LABEL).map(([k,l]) => `<button data-kind="${k}" aria-pressed="${c.kind===k}">${l}</button>`).join("")}</div>`:""}
+      <div class="tags">${(c.tags||[]).map(t => `<span class="chip">#${esc(t)}<button data-untag="${esc(t)}" aria-label="${esc(t)} 태그 빼기">×</button></span>`).join("")}<input data-tag list="tagList" placeholder="+ 태그" aria-label="태그 추가"></div>
       ${c.followups && c.followups.length ? `<ul class="fu">${c.followups.map(f => `<li>꼬리: ${esc(f)}</li>`).join("")}</ul>` : ""}
       <textarea rows="1" data-note placeholder="${multi?esc(DB.me.name)+" 기록":"기록"}" aria-label="기록">${esc(c.myNote)}</textarea>
       <div class="others" data-others>${othersHtml(c)}</div>
@@ -810,6 +859,9 @@ function renderCards(){
     </article>`;
   }).join("") || `<div class="panel empty-msg">아직 질문 카드가 없습니다. 기출문제 탐색이나 + 질문으로 추가하세요.</div>`;
   document.querySelectorAll("#cards textarea").forEach(grow);
+  // 이 세션에서 쓴 태그를 자동완성 후보로
+  const all = [...new Set(S.cards.flatMap(c => c.tags || []))].sort((a,b) => a.localeCompare(b, "ko"));
+  $("#tagList").innerHTML = all.map(t => `<option value="${esc(t)}">`).join("");
   if (document.activeElement !== $("#overall")) { $("#overall").value = S.session.overall || ""; grow($("#overall")); }
   updateTotal();
 }
@@ -824,6 +876,8 @@ $("#cards").addEventListener("click", e => {
   const k = e.target.closest("[data-kind]");
   if (k) { const c = findCard(k); c.kind = k.dataset.kind; c.q = INTRO[c.kind] || ""; dirty = true; renderCards();
     if (c.kind === "etc") document.querySelector(`[data-id="${c.id}"] [data-introetc]`)?.focus(); return; }
+  const ut = e.target.closest("[data-untag]");
+  if (ut) { const c = findCard(ut); c.tags = c.tags.filter(t => t !== ut.dataset.untag); dirty = true; renderCards(); return; }
   const b = e.target.closest("[data-act]"); if (!b) return;
   const c = findCard(b);
   if (b.dataset.act === "toggle") active = active === c.id ? null : c.id;
@@ -845,6 +899,23 @@ $("#cards").addEventListener("change", e => {
   const c = findCard(e.target), v = e.target.value.trim();
   if (v) c.q = v;             // 비우면 원래 질문 유지 (지우려면 X)
   editing = null; dirty = true; renderCards();
+});
+// 태그: Enter·쉼표·스페이스로 넣고, 빈 칸에서 Backspace면 마지막 태그를 뺀다
+const addTags = (c, raw) => {
+  const ts = raw.split(/[,\s]+/).map(t => t.replace(/^#+/, "").trim().slice(0, 30)).filter(Boolean);
+  c.tags = [...new Set([...(c.tags || []), ...ts])].slice(0, 10); if (ts.length) dirty = true;
+};
+$("#cards").addEventListener("keydown", e => {
+  if (!e.target.matches("[data-tag]")) return;
+  const el = e.target, c = findCard(el);
+  if ((e.key === "Enter" || e.key === "," || e.key === " ") && !e.isComposing) {
+    e.preventDefault(); if (!el.value.trim()) return;
+    addTags(c, el.value); renderCards(); document.querySelector(`[data-id="${c.id}"] [data-tag]`)?.focus();
+  } else if (e.key === "Backspace" && !el.value && c.tags?.length) { c.tags.pop(); dirty = true; renderCards(); document.querySelector(`[data-id="${c.id}"] [data-tag]`)?.focus(); }
+});
+$("#cards").addEventListener("focusout", e => {
+  if (!e.target.matches("[data-tag]") || !e.target.value.trim()) return;
+  const c = findCard(e.target); addTags(c, e.target.value); setTimeout(renderCards);
 });
 $("#cards").addEventListener("keydown", e => {
   if (!e.target.matches("[data-qedit]")) return;
@@ -895,7 +966,7 @@ async function flush(){
   try {
     const r = await call("saveSession", {
       id: sid, date: S.session.date, overall: S.session.overall, meet: S.session.meet, interviewers: S.session.interviewers,
-      cards: S.cards.map(c => ({id:c.id, q:c.q, preset:c.preset, kind:c.kind, src:c.src, followups:c.followups, ans:c.ans, t:c.t, myNote:c.myNote})),
+      cards: S.cards.map(c => ({id:c.id, q:c.q, preset:c.preset, kind:c.kind, src:c.src, followups:c.followups, ans:c.ans, t:c.t, tags:c.tags || [], myNote:c.myNote})),
     }, {quiet:true});
     // 다른 면접위원 기록만 갱신 (내 입력과 구조는 건드리지 않는다)
     if (S && S.session.id === sid) r.cards.forEach(sc => {
@@ -952,7 +1023,7 @@ $("#gichulBtn").onclick = openG;
 $("#gList").onclick = e => {
   const b = e.target.closest("[data-g]"); if (!b) return;
   const g = GICHUL.find(x => x.id === b.dataset.g);
-  addCard({id:rid(), q:g.q, src:`${g.round}회 기출`, followups:g.followups, ans:g.answer, t:0, notes:{}, myNote:""});
+  addCard({id:rid(), q:g.q, src:`${g.round}회 기출`, followups:g.followups, ans:g.answer, tags:g.domain ? [g.domain] : [], t:0, notes:{}, myNote:""});
   renderCards(); renderG(); toast("질문 카드로 추가했습니다 (꼬리질문·모범답안 포함)");
 };
 document.querySelectorAll("[data-close]").forEach(b => b.onclick = () => b.closest("dialog").close());
@@ -967,7 +1038,7 @@ function renderReport(){
   const items = S.cards.filter(x => x.q).map(x => {
     const n = notesOf(x);
     const notes = Object.keys(n).filter(k => n[k]).map(k => `${ivs.length>1?`<b>${esc(nameOf(k))}</b> `:""}${esc(n[k])}`).join("\n") || "-";
-    return `<div class="fbi"><div class="h"><span>${tagOf(x)?`<span class="src">[${esc(tagOf(x))}]</span> `:""}${esc(x.q)}</span><span class="num">${x.t?fmt(x.t):"-"}</span></div><div class="n">${notes}</div></div>`;
+    return `<div class="fbi"><div class="h"><span>${tagOf(x)?`<span class="src">[${esc(tagOf(x))}]</span> `:""}${esc(x.q)}${(x.tags||[]).length?` <span class="src">${x.tags.map(t => "#"+esc(t)).join(" ")}</span>`:""}</span><span class="num">${x.t?fmt(x.t):"-"}</span></div><div class="n">${notes}</div></div>`;
   });
   // 1쪽: 좌 이력카드 / 우 결과·총평 + 피드백. 우측 단이 차면 다음 쪽 좌→우 단으로 흘려 넣는다 (실제 높이를 재서 판단)
   const box = $("#pages");
