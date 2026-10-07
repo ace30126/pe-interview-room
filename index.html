@@ -328,6 +328,7 @@ dialog.small{width:min(460px,calc(100% - 32px))}
             <span class="meta" id="meta"></span>
             <div class="acts">
               <button class="btn" id="gichulBtn">기출문제 탐색</button>
+              <button class="btn" id="endBtn" hidden title="총 시간을 여기서 멈춥니다">면접 종료</button>
               <button class="btn" id="pdfBtn">PDF로 출력</button>
               <button class="btn primary" id="addBtn">+ 질문</button>
             </div>
@@ -703,7 +704,6 @@ $("#sForm").onsubmit = e => {
 $("#menuBtn").onclick = () => $("#app").classList.toggle("open");
 
 async function openSession(id){
-  if (S && active) { active = null; S.session.endedAt = new Date().toISOString(); dirty = true; }  // 재던 세션을 떠나면 그 시각을 종료로
   await flush();
   active = null; pendingImg = null; replacing = false;
   try { S = await call("session", {id}); } catch(e){ toast("세션을 열지 못했습니다: "+e.message); return; }
@@ -978,22 +978,23 @@ function renderCards(){
   updateTotal();
 }
 const othersHtml = c => Object.entries(c.notes || {}).filter(([e,v]) => e !== DB.me.email && v).map(([e,v]) => `<span><b>${esc(nameOf(e))}</b> ${esc(v)}</span>`).join("");
-// 총 시간 = 첫 질문을 시작한 때부터 마지막 질문을 멈춘 때까지 (질문 사이 쉬는 시간 포함)
+// 총 시간 = 첫 질문을 시작한 때부터 [면접 종료]를 누를 때까지. 질문 타이머를 멈춰도 계속 흐른다.
+const inProgress = () => !!(S && S.session.startedAt && !S.session.endedAt);
 const total = () => {
   const st = S.session.startedAt; if (!st) return 0;
-  const end = active ? Date.now() : S.session.endedAt ? Date.parse(S.session.endedAt) : Date.parse(st) + 1000 * S.cards.reduce((a,c) => a + (c.t||0), 0);
+  const end = S.session.endedAt ? Date.parse(S.session.endedAt) : Date.now();
   return Math.max(0, Math.round((end - Date.parse(st)) / 1000));
 };
-// 측정 시작·멈춤 시각을 세션에 남긴다. 모든 카드 시간을 초기화하면 총 시간도 비운다.
-function markClock(wasActive){
-  const now = new Date().toISOString();
-  if (active && !wasActive && !S.session.startedAt) S.session.startedAt = now;
-  if (!active && wasActive) S.session.endedAt = now;
+// 질문을 시작하면 총 시간이 시작된다 (종료 뒤 다시 시작하면 이어서 흐른다). 모든 카드 시간을 초기화하면 총 시간도 비운다.
+function markClock(){
+  if (active && !S.session.startedAt) S.session.startedAt = new Date().toISOString();
+  if (active && S.session.endedAt) S.session.endedAt = "";
   if (!active && S.cards.every(c => !c.t)) { S.session.startedAt = ""; S.session.endedAt = ""; }
   dirty = true;
 }
 function updateTotal(){
   $("#total").textContent = fmt(total());
+  $("#endBtn").hidden = !inProgress() || S.ro;
   $("#meta").textContent = `질문 ${S.cards.length}개 · 답변 ${S.cards.filter(c => c.t > 0).length}개`;
 }
 const findCard = el => S.cards.find(x => x.id === el.closest("[data-id]")?.dataset.id);
@@ -1005,7 +1006,7 @@ $("#cards").addEventListener("click", e => {
   const ut = e.target.closest("[data-untag]");
   if (ut) { const c = findCard(ut); c.tags = c.tags.filter(t => t !== ut.dataset.untag); dirty = true; renderCards(); return; }
   const b = e.target.closest("[data-act]"); if (!b) return;
-  const c = findCard(b), wasActive = active;
+  const c = findCard(b);
   if (b.dataset.act === "toggle") active = active === c.id ? null : c.id;
   if (b.dataset.act === "reset") { c.t = 0; if (active === c.id) active = null; dirty = true; }
   if (b.dataset.act === "edit") { editing = c.id; renderCards(); const i = document.querySelector(`[data-id="${c.id}"] [data-qedit]`); i?.focus(); i?.select(); return; }
@@ -1013,7 +1014,7 @@ $("#cards").addEventListener("click", e => {
     const used = c.t > 0 || c.myNote || Object.values(c.notes || {}).some(Boolean);
     if (used && !confirm("이 카드에는 측정 시간이나 기록이 있습니다. 카드를 삭제할까요?")) return;
     S.cards = S.cards.filter(x => x !== c); if (active === c.id) active = null; if (editing === c.id) editing = null; dirty = true; }
-  if (["toggle","reset","del"].includes(b.dataset.act)) markClock(wasActive);
+  if (["toggle","reset","del"].includes(b.dataset.act)) markClock();
   renderCards(); updateTotal();
 });
 $("#cards").addEventListener("input", e => {
@@ -1049,6 +1050,11 @@ $("#cards").addEventListener("keydown", e => {
   if (e.key === "Enter") { e.preventDefault(); e.target.blur(); }
   if (e.key === "Escape" && editing) { editing = null; renderCards(); }
 });
+$("#endBtn").onclick = () => {
+  if (!inProgress()) return;
+  active = null; S.session.endedAt = new Date().toISOString(); dirty = true;
+  renderCards(); updateTotal(); flush(); toast(`면접을 종료했습니다 · 총 ${fmt(total())}`);
+};
 $("#overall").oninput = e => { S.session.overall = e.target.value; grow(e.target); dirty = true; };
 // 새 카드는 포부 카드 앞에 넣어 포부가 계속 마지막에 오게 한다
 const addCard = c => { const v = S.cards.findIndex(x => x.preset === "vision"); v < 0 ? S.cards.push(c) : S.cards.splice(v, 0, c); dirty = true; return c; };
@@ -1076,6 +1082,7 @@ $("#cards").addEventListener("dragend", () => {
 
 /* 타이머: 한 번에 한 카드만 */
 setInterval(() => {
+  if (inProgress() && active === null) updateTotal();
   if (active === null || !S) return;
   const c = S.cards.find(x => x.id === active); if (!c) { active = null; return; }
   c.t++; dirty = true;
