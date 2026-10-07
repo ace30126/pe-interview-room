@@ -316,7 +316,7 @@ dialog.report{width:min(1060px,calc(100% - 32px))}
       <label for="cRound">회차</label><input type="text" id="cRound" placeholder="예: 140">
       <label for="cEmail">응시자 이메일</label><input type="text" id="cEmail" placeholder="선택. 넣으면 응시자 본인도 자기 기록을 봅니다">
     </div>
-    <footer><button type="button" class="btn" data-close>취소</button><button type="submit" class="btn primary">저장</button></footer>
+    <footer><button type="button" class="btn ghost" id="cDel" style="margin-right:auto;color:var(--over)" hidden>응시자 삭제</button><button type="button" class="btn" data-close>취소</button><button type="submit" class="btn primary">저장</button></footer>
   </form>
 </dialog>
 
@@ -452,6 +452,16 @@ const API = {
     }
     return withBoot ? {id:x.id, boot:await API.boot()} : x.id;
   },
+  // 세션·카드·기록은 DB가 함께 지운다(on delete cascade). 사진 파일만 따로 지운다.
+  async deleteCand({id}){
+    const c = DB.cands.find(x => x.id === id);
+    if (!c || !(DB.me.admin || c.createdBy === ME)) throw new Error("등록한 사람이나 관리자만 삭제할 수 있습니다");
+    const files = must(await sb.storage.from(BUCKET).list(id));
+    if (files.length) await sb.storage.from(BUCKET).remove(files.map(f => `${id}/${f.name}`));
+    const gone = must(await sb.from("pe_candidates").delete().eq("id", id).select("id"));
+    if (!gone.length) throw new Error("등록한 사람이나 관리자만 삭제할 수 있습니다");
+    return {boot:await API.boot()};
+  },
   async newSession({id, candId, date, cards}){
     must(await sb.from("pe_sessions").upsert({id, cand_id:candId, date, interviewers:[ME], created_by:ME}, {onConflict:"id", ignoreDuplicates:true}));
     const have = must(await sb.from("pe_cards").select("id").eq("session_id", id));
@@ -539,13 +549,15 @@ function renderTree(){
     const open = ss.some(s => s.id === cur) ? "open" : "";
     return `<details ${open}><summary>${esc(c.name)}<span class="sub">${ss.length}회</span></summary>
       ${ss.map(s => `<button class="leaf" data-s="${s.id}" ${s.id===cur?'aria-current="true"':""}><span class="dot"></span>${md(s.date)} 모의면접${String(s.date) > today() ? `<span class="soon">예정</span>` : ""}</button>`).join("")}
-      <button class="leaf add" data-new="${c.id}">+ 새 세션</button></details>`;
+      <button class="leaf add" data-new="${c.id}">+ 새 세션</button>
+      <button class="leaf add" data-edit="${c.id}">정보 수정·삭제</button></details>`;
   }).join("") + `<button class="leaf add" style="padding-left:6px" id="newCand">+ 응시자 추가</button>`;
 }
 $("#tree").onclick = async e => {
   const s = e.target.closest("[data-s]"), n = e.target.closest("[data-new]");
   if (s) { await openSession(s.dataset.s); $("#app").classList.remove("open"); }
   else if (n) openSessDlg(n.dataset.new);
+  else if (e.target.closest("[data-edit]")) openCandDlg(DB.cands.find(c => c.id === e.target.closest("[data-edit]").dataset.edit));
   else if (e.target.id === "newCand") openCandDlg(null);
 };
 const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; };
@@ -651,9 +663,25 @@ function openCandDlg(c){
   $("#cTitle").textContent = c ? "응시자 정보 수정" : "응시자 추가";
   $("#cName").value = c ? c.name : ""; $("#cField").value = c ? (c.field || "정보관리기술사") : "정보관리기술사";
   $("#cRound").value = c ? c.round : ""; $("#cEmail").value = c ? (c.email || "") : "";
+  $("#cDel").hidden = !c || !(DB.me.admin || c.createdBy === DB.me.email);
+  $("#cDel").textContent = "응시자 삭제"; cDelArmed = false;
   $("#cDlg").showModal();
 }
 $("#editCand").onclick = () => openCandDlg(cand());
+let cDelArmed = false;
+$("#cDel").onclick = () => {
+  const c = editingCand; if (!c) return;
+  const n = DB.sessions.filter(s => s.candId === c.id).length;
+  if (!cDelArmed) { cDelArmed = true; $("#cDel").textContent = `세션 ${n}개·기록까지 지워집니다. 한 번 더 누르면 삭제`; return; }
+  lockBtn($("#cDel"), async () => {
+    try {
+      const r = await call("deleteCand", {id:c.id});
+      if (S && S.session.candId === c.id) { cur = null; S = null; store.del("pe_last");
+        $("#room").hidden = true; $("#sessTools").hidden = true; $("#blank").hidden = false; $("#crumb").textContent = "세션을 고르세요"; }
+      DB = r.boot; renderTree(); $("#cDlg").close(); toast(`${c.name} 응시자를 삭제했습니다`);
+    } catch(e){ toast("삭제하지 못했습니다: " + e.message); }
+  });
+};
 $("#cForm").onsubmit = e => {
   e.preventDefault();
   const x = {name:$("#cName").value.trim(), field:$("#cField").value, round:$("#cRound").value.trim(), email:$("#cEmail").value.trim()};
