@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>사용 설명서 - 기술사 면접실</title>
+<style>
+:root{--bg:#fafaf8;--ink:#1d1d1f;--muted:#5f6368;--rule:#dcdcd6;--accent:#2f6fb5;--box:#f0f0eb}
+@media (prefers-color-scheme:dark){:root{--bg:#14171c;--ink:#e6e6e3;--muted:#9aa0a6;--rule:#30343b;--accent:#7fb0e8;--box:#1d2128;color-scheme:dark}}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.75 "IBM Plex Sans KR",system-ui,sans-serif}
+main{max-width:760px;margin:0 auto;padding-block:32px 64px;padding-inline:16px}
+h1{font-size:24px;margin:0 0 4px}
+h2{font-size:18px;margin:36px 0 8px;padding-top:12px;border-top:1px solid var(--rule)}
+h3{font-size:15px;margin:20px 0 4px}
+p,li{margin:4px 0}
+ol,ul{padding-left:22px}
+a{color:var(--accent)}
+.lead{color:var(--muted);margin-bottom:20px}
+.box{background:var(--box);border:1px solid var(--rule);border-radius:8px;padding:12px 14px;margin:12px 0}
+b.ui{font-weight:600;border:1px solid var(--rule);border-radius:4px;padding:0 5px;font-size:13px;white-space:nowrap}
+table{border-collapse:collapse;width:100%;font-size:14px;margin:8px 0}
+th,td{border:1px solid var(--rule);padding:6px 8px;text-align:left;vertical-align:top}
+th{background:var(--box);font-weight:600}
+.wrap{overflow-x:auto}
+nav ol{columns:2;column-gap:24px}
+@media (max-width:520px){nav ol{columns:1}}
+</style>
+</head>
+<body>
+<main>
+<h1>기술사 면접실 사용 설명서</h1>
+<p class="lead">139회 동기 모의면접용 도구입니다. 이력카드를 보며 질문 카드로 면접을 진행하고, 답변 시간과 피드백을 기록해 결과 보고서 PDF로 남깁니다.</p>
+
+<div class="box">
+<b>접속 주소</b>: <a href="./">https://ace30126.github.io/pe-interview-room/</a><br>
+PC 크롬에서 쓰는 것을 권합니다. 휴대폰에서도 열리지만 화면이 좁습니다.
+</div>
+
+<nav><ol>
+<li><a href="#login">처음 들어가기</a></li>
+<li><a href="#screen">화면 구성</a></li>
+<li><a href="#cand">응시자 추가와 초대</a></li>
+<li><a href="#session">세션 만들기</a></li>
+<li><a href="#run">면접 진행</a></li>
+<li><a href="#multi">면접위원이 여럿일 때</a></li>
+<li><a href="#report">결과 보고서</a></li>
+<li><a href="#scope">누가 무엇을 보나</a></li>
+<li><a href="#faq">자주 묻는 질문</a></li>
+</ol></nav>
+
+<h2 id="login">1. 처음 들어가기</h2>
+<ol>
+<li>접속 주소에서 <b class="ui">Google 계정으로 로그인</b>을 누릅니다.</li>
+<li>동기회 명단에 적어 낸 이메일의 Google 계정을 고릅니다.</li>
+<li>왼쪽 아래에 내 이름과 이메일이 보이면 들어온 것입니다.</li>
+</ol>
+<div class="box">
+<b>네이버 메일로 명단을 내신 분</b><br>
+로그인은 Google 계정으로만 됩니다. 네이버 주소로 만든 Google 계정이 있으면 그 계정을 고르면 됩니다. 없으면 평소 쓰는 Gmail로 로그인하세요. "아직 등록되지 않았습니다"라는 화면에 표시되는 이메일을 관리자에게 알려 주시면 그 주소로 등록해 드립니다.
+</div>
+
+<h2 id="screen">2. 화면 구성</h2>
+<ul>
+<li><b>왼쪽</b>: 응시자 목록. 응시자 이름을 펼치면 그 사람의 세션(면접 날짜별)이 나옵니다. <b class="ui">예정</b>은 앞으로 할 면접입니다.</li>
+<li><b>가운데 위</b>: 면접일, 면접위원, Meet 링크, 저장 상태.</li>
+<li><b>가운데</b>: 왼쪽은 이력카드 사진과 요약 메모, 오른쪽은 질문 카드.</li>
+</ul>
+
+<h2 id="cand">3. 응시자 추가와 초대</h2>
+<ol>
+<li>왼쪽 아래 <b class="ui">+ 응시자 추가</b>를 누릅니다.</li>
+<li>이름, 종목, 회차를 넣습니다.</li>
+<li><b>응시자 이메일</b>은 선택입니다. 넣으면 응시자 본인도 로그인해서 자기 기록과 피드백을 볼 수 있습니다.</li>
+<li><b>초대한 동기</b>에서 이 응시자의 이력카드와 기록을 함께 볼 동기를 고릅니다. 면접위원으로 들어올 분을 여기서 미리 초대해 두면 편합니다.</li>
+</ol>
+<p>나중에 바꾸려면 응시자 이름을 펼쳐 <b class="ui">정보 수정·삭제</b>를 누릅니다. 삭제는 그 응시자를 등록한 사람과 관리자만 할 수 있고, 두 번 눌러야 지워집니다. 지우면 세션과 기록도 모두 사라집니다.</p>
+
+<h2 id="session">4. 세션 만들기</h2>
+<ol>
+<li>응시자 이름을 펼쳐 <b class="ui">+ 새 세션</b>을 누릅니다.</li>
+<li>면접일을 고르고 <b class="ui">만들기</b>를 누릅니다. 미리 잡아 둔 날짜도 됩니다.</li>
+<li>새 세션에는 <b>자기소개</b> 카드(맨 앞)와 <b>포부</b> 카드(맨 뒤)가 기본으로 들어 있습니다. 필요 없으면 지워도 됩니다.</li>
+</ol>
+<p>면접일은 세션 위쪽 <b class="ui">면접일</b> 칸에서 언제든 바꿀 수 있습니다.</p>
+
+<h2 id="run">5. 면접 진행</h2>
+<h3>이력카드 사진</h3>
+<p>이력카드를 캡처해 화면에서 <b>Ctrl+V</b>로 붙여넣거나, 사진 칸으로 끌어다 놓은 뒤 <b class="ui">저장</b>을 누릅니다.</p>
+<h3>질문 카드 만들기</h3>
+<ul>
+<li><b class="ui">기출문제 탐색</b>: 139회 복기 기출에서 골라 넣습니다. 키워드, 유형(이력·토픽·시사·소양), 분야로 거를 수 있고, 꼬리질문과 모범답안이 함께 들어갑니다.</li>
+<li><b class="ui">+ 질문</b>: 직접 질문을 씁니다.</li>
+<li>카드 왼쪽 <b>⋮⋮</b>을 끌어 순서를 바꿉니다. 새 카드는 늘 포부 카드 앞에 들어갑니다.</li>
+<li>자기소개 카드에서는 유형(경력기반·성공프로젝트·장단점·기타)을 고를 수 있습니다.</li>
+</ul>
+<h3>타이머와 기록</h3>
+<ul>
+<li>질문을 던지면 그 카드의 ▶를 누르고, 답변이 끝나면 다시 눌러 멈춥니다. 한 번에 한 카드만 돌아갑니다.</li>
+<li>카드 아래 칸에 답변 메모와 피드백을 적습니다.</li>
+<li><b>총평</b> 칸("전체 인상, 강점, 보완점")에 전체 인상, 강점, 보완점을 적습니다.</li>
+<li>모든 입력은 몇 초마다 자동 저장됩니다. 위쪽에 "저장됨 시:분"이 보이면 저장된 것입니다.</li>
+</ul>
+<h3>Meet로 할 때</h3>
+<p>위쪽 칸에 Google Meet 링크를 붙여넣고 <b class="ui">Meet 열기</b>를 누르면 작은 창으로 열립니다.</p>
+
+<h2 id="multi">6. 면접위원이 여럿일 때</h2>
+<ul>
+<li>세션 위쪽 <b>면접위원</b>의 <b class="ui">+ 추가</b>에서 동기를 넣습니다. 추가된 분은 이 세션과 응시자 이력카드를 볼 수 있습니다.</li>
+<li><b>기록은 사람마다 따로 저장</b>됩니다. 내 칸에는 내 기록이, 다른 면접위원의 기록은 그 아래에 이름과 함께 몇 초 간격으로 보입니다.</li>
+<li><b>카드 순서, 질문, 타이머는 진행자 한 명만 만져 주세요.</b> 여럿이 동시에 카드를 옮기거나 지우면 마지막에 저장한 사람의 상태가 남아 다른 분의 변경이 사라질 수 있습니다.</li>
+</ul>
+
+<h2 id="report">7. 결과 보고서</h2>
+<ol>
+<li><b class="ui">PDF로 출력</b>을 누르면 A4 가로 보고서 미리보기가 뜹니다. 왼쪽은 이력카드, 오른쪽은 질문별 시간과 피드백입니다.</li>
+<li><b class="ui">PDF 내려받기</b>로 저장해 응시자에게 전달합니다.</li>
+</ol>
+<p>앱에는 자동 백업이 없습니다. 중요한 세션은 PDF로 내려받아 두세요.</p>
+
+<h2 id="scope">8. 누가 무엇을 보나</h2>
+<div class="wrap"><table>
+<tr><th>내용</th><th>볼 수 있는 사람</th></tr>
+<tr><td>기출문제</td><td>동기 전원</td></tr>
+<tr><td>응시자 목록(이름·종목·회차)</td><td>동기 전원. 초대받지 않은 응시자는 <b>초대 필요</b>로 표시됩니다</td></tr>
+<tr><td>이력카드 사진, 요약 메모, 세션, 기록</td><td>등록한 사람, 초대받은 동기, 그 세션의 면접위원, 응시자 본인(이메일을 넣었을 때), 관리자</td></tr>
+</table></div>
+<p>보고 싶은 응시자가 <b>초대 필요</b>로 보이면, 펼쳤을 때 나오는 등록자에게 초대를 요청하세요.</p>
+<div class="box">이력카드에는 실명과 경력이 들어갑니다. 다른 동기의 이력카드를 올리기 전에 본인 동의를 받아 주세요. 앱 주소가 밖으로 퍼져도 명단에 없는 사람은 아무것도 볼 수 없습니다.</div>
+
+<h2 id="faq">9. 자주 묻는 질문</h2>
+<h3>"아직 등록되지 않았습니다"가 떠요</h3>
+<p>로그인한 Google 계정이 명단에 없는 경우입니다. 화면에 나온 이메일을 관리자에게 알려 주세요. 다른 계정으로 다시 들어가려면 <b class="ui">다른 Google 계정으로 로그인</b>을 누릅니다.</p>
+<h3>저장이 안 된 것 같아요</h3>
+<p>위쪽에 "저장 실패 · 다시 시도 중"이 보이면 인터넷 연결을 확인하세요. 연결되면 자동으로 다시 저장합니다. 창을 닫기 전에 "저장됨"을 확인하는 습관을 권합니다.</p>
+<h3>같은 응시자가 두 번 생겼어요</h3>
+<p>하나를 <b class="ui">정보 수정·삭제</b>에서 지우면 됩니다. 등록자나 관리자만 지울 수 있습니다.</p>
+<h3>로그아웃은요?</h3>
+<p>왼쪽 아래 내 이름 옆 <b class="ui">로그아웃</b>을 누릅니다. 공용 PC에서는 꼭 로그아웃하세요.</p>
+
+<p style="margin-top:40px;color:var(--muted);font-size:13px">문의: 관리자 서민형 · <a href="privacy.html">개인정보처리방침</a></p>
+</main>
+</body>
+</html>

@@ -206,6 +206,9 @@ dialog.report{width:min(1060px,calc(100% - 32px))}
 @keyframes busy{from{transform:translateX(-100%)}to{transform:translateX(340%)}}
 @media (prefers-reduced-motion:reduce){.busy::before{animation:none;width:100%;opacity:.6}}
 .dateIn{font:inherit;font-size:13px;padding:3px 6px;border:1px solid var(--rule);border-radius:var(--r);background:var(--sheet);color:var(--ink)}
+.inv{display:flex;flex-wrap:wrap;gap:4px 10px;max-height:160px;overflow-y:auto;font-size:13px}
+.inv label{display:flex;gap:4px;align-items:center;color:var(--ink)!important}
+.tree .locked{font-size:12px;color:var(--muted);padding:4px 8px 6px 22px}
 .leaf .soon{margin-left:6px;font-size:11px;color:var(--accent)}
 .toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--paper);padding:8px 16px;border-radius:var(--r);font-size:13px;z-index:40}
 @media (prefers-reduced-motion:reduce){.side,.tree details>summary::before{transition:none}}
@@ -252,7 +255,8 @@ dialog.report{width:min(1060px,calc(100% - 32px))}
       <div class="label" style="padding:0 6px 4px">응시자</div>
       <nav class="tree" id="tree"></nav>
     </div>
-    <div class="foot" id="meLine"></div>
+    <div class="foot"><a href="guide.html" target="_blank" rel="noopener">사용 설명서</a></div>
+    <div class="foot" id="meLine" style="margin-top:0"></div>
   </aside>
 
   <div class="main">
@@ -315,6 +319,7 @@ dialog.report{width:min(1060px,calc(100% - 32px))}
       <select id="cField"><option>정보관리기술사</option><option>컴퓨터시스템응용기술사</option><option>정보통신기술사</option><option>기타</option></select>
       <label for="cRound">회차</label><input type="text" id="cRound" placeholder="예: 140">
       <label for="cEmail">응시자 이메일</label><input type="text" id="cEmail" placeholder="선택. 넣으면 응시자 본인도 자기 기록을 봅니다">
+      <span class="label" style="align-self:start">초대한 동기</span><div class="inv" id="cInv"></div>
     </div>
     <footer><button type="button" class="btn ghost" id="cDel" style="margin-right:auto;color:var(--over)" hidden>응시자 삭제</button><button type="button" class="btn" data-close>취소</button><button type="submit" class="btn primary">저장</button></footer>
   </form>
@@ -405,17 +410,19 @@ async function notesOf(cardIds){
 // 화면 코드는 예전 Apps Script 응답 모양 그대로 쓴다. 여기서 Supabase 호출로 바꿔 준다.
 const API = {
   async boot(){
-    const [mem, cands, sess] = (await Promise.all([
+    const [mem, cands, sess, dir] = (await Promise.all([
       sb.from("pe_members").select("email,name,role,active"),
-      sb.from("pe_candidates").select("id,name,field,round,email,memo,img_path,created_by").order("created_at"),
+      sb.from("pe_candidates").select("id,name,field,round,email,memo,img_path,created_by,invited").order("created_at"),
       sb.from("pe_sessions").select("id,cand_id,date,interviewers"),
+      sb.rpc("pe_cand_dir"),
     ])).map(must);
     const me = mem.find(m => m.email === ME && m.active);
     if (!me) throw new Error("NOT_MEMBER:" + ME);
     return {
       me: {email:ME, name:me.name || ME.split("@")[0], admin:me.role === "admin"},
       members: mem.filter(m => m.active).map(m => ({email:m.email, name:m.name || m.email.split("@")[0]})),
-      cands: cands.map(c => ({id:c.id, name:c.name, field:c.field, round:c.round, email:c.email, memo:c.memo, hasImg:!!c.img_path, imgPath:c.img_path, createdBy:c.created_by})),
+      cands: cands.map(c => ({id:c.id, name:c.name, field:c.field, round:c.round, email:c.email, memo:c.memo, hasImg:!!c.img_path, imgPath:c.img_path, createdBy:c.created_by, invited:c.invited || []})),
+      dir: dir.map(d => ({id:d.id, name:d.name, field:d.field, round:d.round, createdBy:d.created_by, invited:d.invited || []})),
       sessions: sess.map(s => ({id:s.id, candId:s.cand_id, date:s.date, interviewers:s.interviewers})),
     };
   },
@@ -444,10 +451,10 @@ const API = {
     const isNew = !DB || !DB.cands.some(c => c.id === x.id);
     if (isNew) {
       must(await sb.from("pe_candidates").upsert({id:x.id, name:x.name, field:x.field || "", round:x.round || "",
-        email:(x.email || "").trim().toLowerCase(), created_by:ME}, {onConflict:"id", ignoreDuplicates:true}));
+        email:(x.email || "").trim().toLowerCase(), invited:x.invited || [], created_by:ME}, {onConflict:"id", ignoreDuplicates:true}));
     } else {
       const patch = {};
-      ["name","field","round","email","memo"].forEach(k => { if (k in x) patch[k] = k === "email" ? String(x[k]).trim().toLowerCase() : x[k]; });
+      ["name","field","round","email","memo","invited"].forEach(k => { if (k in x) patch[k] = k === "email" ? String(x[k]).trim().toLowerCase() : x[k]; });
       must(await sb.from("pe_candidates").update(patch).eq("id", x.id));
     }
     return withBoot ? {id:x.id, boot:await API.boot()} : x.id;
@@ -544,6 +551,9 @@ async function boot(){
 
 /* ---------- 사이드바 ---------- */
 function renderTree(){
+  const mine = new Set(DB.cands.map(c => c.id));
+  const locked = DB.dir.filter(d => !mine.has(d.id)).map(d => `<details><summary>${esc(d.name)}<span class="sub">초대 필요</span></summary>
+      <div class="locked">${esc(String(d.field).replace("기술사",""))}${d.round?` · ${esc(d.round)}회`:""}<br>열람하려면 ${esc(nameOf(d.createdBy))} 님에게 초대를 요청하세요</div></details>`).join("");
   $("#tree").innerHTML = DB.cands.map(c => {
     const ss = DB.sessions.filter(s => s.candId === c.id).sort((a,b) => String(b.date).localeCompare(a.date));
     const open = ss.some(s => s.id === cur) ? "open" : "";
@@ -551,7 +561,7 @@ function renderTree(){
       ${ss.map(s => `<button class="leaf" data-s="${s.id}" ${s.id===cur?'aria-current="true"':""}><span class="dot"></span>${md(s.date)} 모의면접${String(s.date) > today() ? `<span class="soon">예정</span>` : ""}</button>`).join("")}
       <button class="leaf add" data-new="${c.id}">+ 새 세션</button>
       <button class="leaf add" data-edit="${c.id}">정보 수정·삭제</button></details>`;
-  }).join("") + `<button class="leaf add" style="padding-left:6px" id="newCand">+ 응시자 추가</button>`;
+  }).join("") + locked + `<button class="leaf add" style="padding-left:6px" id="newCand">+ 응시자 추가</button>`;
 }
 $("#tree").onclick = async e => {
   const s = e.target.closest("[data-s]"), n = e.target.closest("[data-new]");
@@ -663,6 +673,9 @@ function openCandDlg(c){
   $("#cTitle").textContent = c ? "응시자 정보 수정" : "응시자 추가";
   $("#cName").value = c ? c.name : ""; $("#cField").value = c ? (c.field || "정보관리기술사") : "정보관리기술사";
   $("#cRound").value = c ? c.round : ""; $("#cEmail").value = c ? (c.email || "") : "";
+  const inv = new Set(c ? c.invited : []);
+  $("#cInv").innerHTML = DB.members.filter(m => m.email !== DB.me.email && (!c || m.email !== c.createdBy))
+    .map(m => `<label><input type="checkbox" value="${esc(m.email)}" ${inv.has(m.email)?"checked":""}>${esc(m.name)}</label>`).join("") || `<span class="muted">초대할 동기가 없습니다</span>`;
   $("#cDel").hidden = !c || !(DB.me.admin || c.createdBy === DB.me.email);
   $("#cDel").textContent = "응시자 삭제"; cDelArmed = false;
   $("#cDlg").showModal();
@@ -686,6 +699,7 @@ $("#cForm").onsubmit = e => {
   e.preventDefault();
   const x = {name:$("#cName").value.trim(), field:$("#cField").value, round:$("#cRound").value.trim(), email:$("#cEmail").value.trim()};
   x.id = editingCand ? editingCand.id : newCandId;
+  x.invited = [...document.querySelectorAll("#cInv input:checked")].map(i => i.value);
   lockBtn($("#cForm [type=submit]"), async () => {
     try {
       const r = await call("saveCand", {cand:x, withBoot:true}); $("#cDlg").close();
