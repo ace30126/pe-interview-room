@@ -285,7 +285,7 @@ dialog.small{width:min(460px,calc(100% - 32px))}
       <div class="label" style="padding:0 6px 4px">응시자</div>
       <nav class="tree" id="tree"></nav>
     </div>
-    <div class="foot"><a href="guide.html" target="_blank" rel="noopener">사용 설명서</a></div>
+    <div class="foot"><a href="guide.html" target="_blank" rel="noopener">사용 설명서</a><span id="adminLine"></span></div>
     <div class="foot" id="meLine" style="margin-top:0"></div>
   </aside>
 
@@ -475,6 +475,7 @@ const API = {
     if (!me) throw new Error("NOT_MEMBER:" + ME);
     return {
       me: {email:ME, name:me.name || ME.split("@")[0], admin:me.role === "admin"},
+      admins: mem.filter(m => m.active && m.role === "admin").map(m => m.email),
       members: mem.filter(m => m.active).map(m => ({email:m.email, name:m.name || m.email.split("@")[0]})),
       cands: cands.map(c => ({id:c.id, name:c.name, field:c.field, round:c.round, email:c.email, memo:c.memo, hasImg:!!c.img_path, imgPath:c.img_path, createdBy:c.created_by, invited:c.invited || [], grp:c.grp || ""})),
       dir: dir.map(d => ({id:d.id, name:d.name, field:d.field, round:d.round, createdBy:d.created_by, invited:d.invited || [], grp:d.grp || ""})),
@@ -622,6 +623,7 @@ async function boot(){
   }
   $("#meLine").innerHTML = `${esc(DB.me.name)} (${esc(DB.me.email)})${DB.me.admin?" · 관리자":""} · <a href="#" id="logout">로그아웃</a>`;
   $("#logout").onclick = async e => { e.preventDefault(); await flush(); await sb.auth.signOut(); location.reload(); };
+  $("#adminLine").innerHTML = DB.admins.length ? `<br>관리자 ${DB.admins.map(e => `<a href="mailto:${esc(e)}">${esc(e)}</a>`).join(", ")}` : "";
   renderTree();
   const last = store.get("pe_last");
   if (last && DB.sessions.some(s => s.id === last)) openSession(last);
@@ -657,7 +659,7 @@ function renderTree(){
       <button class="leaf add" data-edit="${c.id}">정보 수정·삭제</button></details>`;
   };
   const lockedHtml = d => `<details><summary>${esc(d.name)}<span class="sub">초대 필요</span></summary>
-      <div class="locked">${esc(String(d.field).replace("기술사",""))}${d.round?` · ${esc(d.round)}회`:""}<br>열람하려면 ${esc(nameOf(d.createdBy))} 님에게 초대를 요청하세요</div></details>`;
+      <div class="locked">${esc(String(d.field).replace("기술사",""))}${d.round?` · ${esc(d.round)}회`:""}<br>열람하시려면 관리자나 이 응시자의 면접위원에게 초대를 요청하세요</div></details>`;
   const locked = DB.dir.filter(d => !mine.has(d.id));
   const groups = [...new Set([...DB.cands, ...locked].map(x => x.grp || ""))].sort((a,b) => (a === "") - (b === "") || a.localeCompare(b, "ko"));
   $("#tree").innerHTML = mineHtml + groups.map(g => {
