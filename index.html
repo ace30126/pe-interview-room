@@ -207,7 +207,8 @@ dialog.report{width:min(1060px,calc(100% - 32px))}
 @media (prefers-reduced-motion:reduce){.busy::before{animation:none;width:100%;opacity:.6}}
 .dateIn{font:inherit;font-size:13px;padding:3px 6px;border:1px solid var(--rule);border-radius:var(--r);background:var(--sheet);color:var(--ink)}
 .inv{display:flex;flex-wrap:wrap;gap:4px 10px;max-height:160px;overflow-y:auto;font-size:13px}
-.inv label{display:flex;gap:4px;align-items:center;color:var(--ink)!important}
+.inv .chip button{border:0;background:none;color:var(--muted);cursor:pointer;padding:0 0 0 4px}
+.invBox{display:flex;flex-direction:column;gap:6px}
 .tree .locked{font-size:12px;color:var(--muted);padding:4px 8px 6px 22px}
 .leaf .soon{margin-left:6px;font-size:11px;color:var(--accent)}
 .toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--paper);padding:8px 16px;border-radius:var(--r);font-size:13px;z-index:40}
@@ -319,7 +320,9 @@ dialog.report{width:min(1060px,calc(100% - 32px))}
       <select id="cField"><option>정보관리기술사</option><option>컴퓨터시스템응용기술사</option><option>정보통신기술사</option><option>기타</option></select>
       <label for="cRound">회차</label><input type="text" id="cRound" placeholder="예: 140">
       <label for="cEmail">응시자 이메일</label><input type="text" id="cEmail" placeholder="선택. 넣으면 응시자 본인도 자기 기록을 봅니다">
-      <span class="label" style="align-self:start">초대한 동기</span><div class="inv" id="cInv"></div>
+      <label for="cInvIn" style="align-self:start;padding-top:4px">초대</label>
+      <div class="invBox"><div class="inv" id="cInv"></div>
+        <input type="text" id="cInvIn" placeholder="함께 볼 사람의 Google 이메일, Enter로 추가 (여러 명은 쉼표)"></div>
     </div>
     <footer><button type="button" class="btn ghost" id="cDel" style="margin-right:auto;color:var(--over)" hidden>응시자 삭제</button><button type="button" class="btn" data-close>취소</button><button type="submit" class="btn primary">저장</button></footer>
   </form>
@@ -448,6 +451,7 @@ const API = {
   // 새 응시자는 화면에서 정한 id로 들어온다. 같은 id가 또 오면(재시도·연타) 새로 만들지 않는다.
   async saveCand({cand:x, withBoot}){
     if (x.name !== undefined && !x.name) throw new Error("응시자 이름을 입력하세요");
+    if (x.invited && x.invited.length) must(await sb.rpc("pe_invite", {emails:x.invited}));
     const isNew = !DB || !DB.cands.some(c => c.id === x.id);
     if (isNew) {
       must(await sb.from("pe_candidates").upsert({id:x.id, name:x.name, field:x.field || "", round:x.round || "",
@@ -507,7 +511,7 @@ async function call(action, payload, opt){
   try { return await API[action](payload || {}); }
   catch(e){
     const m = String(e && e.message || e);
-    if (m.startsWith("NOT_MEMBER:")) gate(`${m.slice(11)} 계정은 아직 등록되지 않았습니다. 관리자에게 이 이메일 등록을 요청하세요.`, true);
+    if (m.startsWith("NOT_MEMBER:")) gate(`${m.slice(11)} 계정은 아직 초대받지 않았습니다. 이 앱을 쓰는 사람에게 이 이메일로 초대를 요청하세요.`, true);
     else if (/JWT|not authenticated/i.test(m)) gate("로그인이 만료되었습니다. 다시 로그인하세요.");
     throw new Error(m);
   } finally { if (loud) busy(-1); }
@@ -537,10 +541,14 @@ async function boot(){
   const {data:{session}} = await sb.auth.getSession();
   if (!session) return gate("Google 계정으로 로그인해야 들어올 수 있습니다.");
   ME = String(session.user.email || "").toLowerCase();
+  const gname = (session.user.user_metadata || {}).full_name || (session.user.user_metadata || {}).name || "";
   try { DB = await call("boot"); }
   catch(e){
     if ($("#gate").hidden) $("#blank").innerHTML = `불러오지 못했습니다: <b>${esc(String(e && e.message || e))}</b><br>새로고침해도 같으면 이 문구를 관리자에게 알려 주세요.`;
     return;
+  }
+  if (gname && !DB.members.find(m => m.email === ME && m.name !== ME.split("@")[0])) {
+    try { await sb.rpc("pe_set_my_name", {n:gname}); DB.me.name = gname; const m = DB.members.find(m => m.email === ME); if (m) m.name = gname; } catch(e){}
   }
   $("#meLine").innerHTML = `${esc(DB.me.name)} (${esc(DB.me.email)})${DB.me.admin?" · 관리자":""} · <a href="#" id="logout">로그아웃</a>`;
   $("#logout").onclick = async e => { e.preventDefault(); await flush(); await sb.auth.signOut(); location.reload(); };
@@ -666,21 +674,38 @@ $("#photoSlot").onclick = e => {
 $("#sumText").oninput = e => { cand().memo = e.target.value; memoDirty = true; grow(e.target); };
 
 /* 응시자 추가·수정 */
-let editingCand = null, newCandId = null;
+let editingCand = null, newCandId = null, invList = [];
+// 초대: 이메일만 넣으면 된다. 저장할 때 그 사람이 자동으로 가입된다.
+const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+function renderInv(){
+  $("#cInv").innerHTML = invList.map(e => `<span class="chip">${esc(DB.members.some(m => m.email === e) ? nameOf(e) + " · " + e : e)}<button type="button" data-unv="${esc(e)}" aria-label="${esc(e)} 초대 취소">×</button></span>`).join("")
+    || `<span class="muted" style="font-size:12px">아직 초대한 사람이 없습니다</span>`;
+}
+function takeInv(){
+  const bad = [];
+  $("#cInvIn").value.split(/[,\s;]+/).map(x => x.trim().toLowerCase()).filter(Boolean).forEach(e => {
+    if (!EMAIL_RE.test(e)) bad.push(e);
+    else if (e !== DB.me.email && !invList.includes(e)) invList.push(e);
+  });
+  $("#cInvIn").value = bad.join(", ");
+  if (bad.length) toast("이메일 형식이 아닙니다: " + bad.join(", "));
+  renderInv();
+  return !bad.length;
+}
 function openCandDlg(c){
   editingCand = c;
   newCandId = c ? null : "c"+rid();
   $("#cTitle").textContent = c ? "응시자 정보 수정" : "응시자 추가";
   $("#cName").value = c ? c.name : ""; $("#cField").value = c ? (c.field || "정보관리기술사") : "정보관리기술사";
   $("#cRound").value = c ? c.round : ""; $("#cEmail").value = c ? (c.email || "") : "";
-  const inv = new Set(c ? c.invited : []);
-  $("#cInv").innerHTML = DB.members.filter(m => m.email !== DB.me.email && (!c || m.email !== c.createdBy))
-    .map(m => `<label><input type="checkbox" value="${esc(m.email)}" ${inv.has(m.email)?"checked":""}>${esc(m.name)}</label>`).join("") || `<span class="muted">초대할 동기가 없습니다</span>`;
+  invList = c ? [...c.invited] : []; $("#cInvIn").value = ""; renderInv();
   $("#cDel").hidden = !c || !(DB.me.admin || c.createdBy === DB.me.email);
   $("#cDel").textContent = "응시자 삭제"; cDelArmed = false;
   $("#cDlg").showModal();
 }
 $("#editCand").onclick = () => openCandDlg(cand());
+$("#cInvIn").addEventListener("keydown", e => { if (e.key === "Enter" || e.key === ",") { e.preventDefault(); takeInv(); } });
+$("#cInv").addEventListener("click", e => { const b = e.target.closest("[data-unv]"); if (b) { invList = invList.filter(x => x !== b.dataset.unv); renderInv(); } });
 let cDelArmed = false;
 $("#cDel").onclick = () => {
   const c = editingCand; if (!c) return;
@@ -699,7 +724,8 @@ $("#cForm").onsubmit = e => {
   e.preventDefault();
   const x = {name:$("#cName").value.trim(), field:$("#cField").value, round:$("#cRound").value.trim(), email:$("#cEmail").value.trim()};
   x.id = editingCand ? editingCand.id : newCandId;
-  x.invited = [...document.querySelectorAll("#cInv input:checked")].map(i => i.value);
+  if (!takeInv()) return;
+  x.invited = [...invList];
   lockBtn($("#cForm [type=submit]"), async () => {
     try {
       const r = await call("saveCand", {cand:x, withBoot:true}); $("#cDlg").close();
