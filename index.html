@@ -73,6 +73,8 @@ select,input[type=text],input[type=search]{background:var(--sheet);border:1px so
 .topbar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding-block:12px;border-bottom:1px solid var(--rule)}
 .crumb{font-size:13px;color:var(--muted)}
 .crumb b{color:var(--ink);font-weight:500}
+.topbar #quickTop{margin-left:auto}
+.topbar .right:not([hidden]) + #quickTop{margin-left:0}
 .topbar .right{margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .menuBtn{display:none}
 @media (max-width:1000px){
@@ -244,6 +246,7 @@ dialog.report{width:min(1060px,calc(100% - 32px))}
 .gate{position:fixed;inset:0;display:grid;place-items:center;background:var(--paper);z-index:50;padding:16px}
 .gate .box{max-width:420px;display:flex;flex-direction:column;gap:12px;text-align:center}
 .gate h2{font-size:20px}
+#pwForm:not([hidden]){display:flex;flex-direction:column;gap:8px;margin-top:8px}
 .gate a.btn{text-decoration:none;display:inline-block}
 .save{font-size:12px;color:var(--muted)}
 .save.err{color:var(--over)}
@@ -326,6 +329,12 @@ textarea.paste{width:100%;min-height:150px;font-family:var(--font-num);font-size
     <h2>기술사 면접실</h2>
     <p id="gateMsg">Google 계정으로 로그인해야 들어올 수 있습니다.</p>
     <button class="btn primary" id="loginLink">Google 계정으로 로그인</button>
+    <form id="pwForm" hidden>
+      <span class="label">테스트 계정 로그인</span>
+      <input type="email" id="pwEmail" placeholder="이메일" autocomplete="username" required>
+      <input type="password" id="pwPass" placeholder="비밀번호" autocomplete="current-password" required>
+      <button class="btn" type="submit">로그인</button>
+    </form>
   </div>
 </div>
 
@@ -353,6 +362,7 @@ textarea.paste{width:100%;min-height:150px;font-family:var(--font-num);font-size
         <span class="save" id="saveState"></span>
         <button class="btn sm ghost" id="delSess">세션 삭제</button>
       </div>
+      <button class="btn sm primary" id="quickTop" title="응시자 등록 없이 바로 시작하는 비공개 면접">+ 즉석 면접</button>
     </div>
 
     <div class="blank" id="blank">왼쪽에서 응시자의 세션을 고르거나, <b>+ 응시자 추가</b>로 시작하세요.</div>
@@ -456,7 +466,7 @@ textarea.paste{width:100%;min-height:150px;font-family:var(--font-num);font-size
       <label for="snName">스터디 이름</label><input type="text" id="snName" maxlength="40" required placeholder="예: 140회 화요 스터디">
       <label for="snEmail" style="align-self:start;padding-top:4px">그룹원</label>
       <div class="invBox"><div class="inv" id="snInv"></div>
-        <div class="invRow"><input type="text" id="snMName" placeholder="이름" aria-label="초대할 그룹원 이름">
+        <div class="invRow"><input type="text" id="snMName" list="memNames" placeholder="이름 검색·입력" aria-label="초대할 그룹원 이름">
         <input type="text" id="snEmail" list="snMemList" placeholder="Google 이메일, Enter로 추가" aria-label="초대할 그룹원 이메일"></div>
         <span class="muted" style="font-size:12px">나중에 [그룹원 관리]에서 더 초대할 수 있습니다</span></div>
     </div>
@@ -469,6 +479,7 @@ textarea.paste{width:100%;min-height:150px;font-family:var(--font-num);font-size
   </form>
 </dialog>
 <datalist id="snMemList"></datalist>
+<datalist id="memNames"></datalist>
 
 <dialog id="stDlg" class="small">
   <div class="dlg">
@@ -476,7 +487,7 @@ textarea.paste{width:100%;min-height:150px;font-family:var(--font-num);font-size
     <div class="body">
       <p class="muted" style="font-size:12.5px;margin:0 0 8px">그룹원은 이 스터디의 응시자를 모두 보고 기록할 수 있습니다. 스터디 밖 사람에게는 보이지 않습니다.</p>
       <div class="ivlist" id="stList"></div>
-      <div class="invRow" id="stAddRow" style="margin-top:10px"><input type="text" id="stName" placeholder="이름" aria-label="초대할 그룹원 이름">
+      <div class="invRow" id="stAddRow" style="margin-top:10px"><input type="text" id="stName" list="memNames" placeholder="이름 검색·입력" aria-label="초대할 그룹원 이름">
         <input type="text" id="stEmail" placeholder="Google 이메일, Enter로 초대" aria-label="초대할 그룹원 이메일"></div>
     </div>
     <footer><button type="button" class="btn ghost" id="stDel" style="margin-right:auto;color:var(--over)" hidden>스터디 삭제</button><button type="button" class="btn" id="stInvite">초대</button></footer>
@@ -725,6 +736,15 @@ function gate(msg, otherAccount){
   $("#loginLink").textContent = otherAccount ? "다른 Google 계정으로 로그인" : "Google 계정으로 로그인";
   $("#gate").hidden = false;
 }
+// 테스트 계정(Supabase 이메일·비밀번호 사용자)은 주소에 ?pw 가 있을 때만 로그인 칸을 보인다. 초대 명단 검사는 똑같이 받는다.
+if (/[?&]pw(=|&|$)/.test(location.search)) $("#pwForm").hidden = false;
+$("#pwForm").onsubmit = async e => {
+  e.preventDefault();
+  await sb.auth.signOut();
+  const {error} = await sb.auth.signInWithPassword({email:$("#pwEmail").value.trim().toLowerCase(), password:$("#pwPass").value});
+  if (error) return toast("로그인하지 못했습니다: " + error.message);
+  location.replace(location.pathname + "?pw");
+};
 $("#loginLink").onclick = async () => {
   await sb.auth.signOut();
   sb.auth.signInWithOAuth({provider:"google", options:{redirectTo:location.origin + location.pathname, queryParams:{prompt:"select_account"}}});
@@ -792,6 +812,8 @@ function sealedForMe(s){
   const c = DB.cands.find(x => x.id === s.candId) || {}, me = DB.me.email;
   return !DB.me.admin && !!c.email && c.email === me && !s.endedAt && s.createdBy !== me && !s.interviewers.includes(me);
 }
+// "내 응시자": 내가 등록했거나, 내가 응시자 본인이거나, 내가 면접위원인 세션이 있는 응시자
+const myCand = c => c.createdBy === DB.me.email || c.email === DB.me.email || DB.sessions.some(s => s.candId === c.id && s.interviewers.includes(DB.me.email));
 function renderTree(){
   const mine = new Set(DB.cands.map(c => c.id));
   const isOpen = (k, def) => TREE_OPEN[k] === undefined ? def : TREE_OPEN[k];
@@ -807,8 +829,8 @@ function renderTree(){
   const dupe = n => DB.cands.filter(c => c.name === n).length + DB.dir.filter(d => d.name === n && !mine.has(d.id)).length > 1;
   const candHtml = c => {
     const ss = DB.sessions.filter(s => s.candId === c.id).sort((a,b) => sKey(a).localeCompare(sKey(b)));
-    const k = "c:" + c.id, extra = dupe(c.name) ? (c.email ? c.email.split("@")[0] : nameOf(c.createdBy) + " 등록") : "";
-    return `<details data-k="${k}" ${isOpen(k, ss.some(s => s.id === cur)) ? "open" : ""}><summary>${esc(c.name)}${extra ? ` <small class="muted">${esc(extra)}</small>` : ""}<span class="sub">${ss.length}회</span></summary>
+    const k = "c:" + c.id, mineC = myCand(c) && ss.length > 0, extra = dupe(c.name) ? (c.email ? c.email.split("@")[0] : nameOf(c.createdBy) + " 등록") : "";
+    return `<details data-k="${k}" ${isOpen(k, ss.some(s => s.id === cur) || mineC) ? "open" : ""}><summary>${esc(c.name)}${extra ? ` <small class="muted">${esc(extra)}</small>` : ""}<span class="sub">${ss.length}회</span></summary>
       ${ss.map(s => leaf(s, ivNames(s))).join("")}
       <button class="leaf add" data-new="${c.id}">+ 새 세션</button>
       <button class="leaf add" data-edit="${c.id}">정보 수정·삭제</button></details>`;
@@ -831,15 +853,16 @@ function renderTree(){
   const cut = (d => { d.setDate(d.getDate() - 30); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; })(new Date());
   const byRecent = (a,b) => lastDate(b).localeCompare(lastDate(a));
   const qNew = myQuick.filter(c => lastDate(c) >= cut).sort(byRecent), qOld = myQuick.filter(c => lastDate(c) < cut).sort(byRecent);
-  const quickHtml = `<details class="grp" data-k="quick" ${isOpen("quick", true) ? "open" : ""}><summary>즉석 면접<span class="sub">${myQuick.length ? myQuick.length + "건 · 비공개" : "응시자 등록 없이"}</span></summary><div class="gin">`
-    + `<button class="leaf add" id="newQuick">+ 즉석 면접 시작</button>${qNew.map(candHtml).join("")}`
+  // 시작 버튼은 상단 오른쪽(#quickTop). 사이드바에는 만든 즉석 면접만 모아 둔다.
+  const quickHtml = !myQuick.length ? "" : `<details class="grp" data-k="quick" ${isOpen("quick", true) ? "open" : ""}><summary>즉석 면접<span class="sub">${myQuick.length}건 · 비공개</span></summary><div class="gin">`
+    + `${qNew.map(candHtml).join("")}`
     + (qOld.length ? `<details class="grp" data-k="quickOld" ${isOpen("quickOld", false) ? "open" : ""}><summary>30일 지난 즉석 면접<span class="sub">${qOld.length}건</span></summary><div class="gin">${qOld.map(candHtml).join("")}</div></details>` : "")
     + `</div></details>`;
   const groups = [...new Set([...shared, ...locked].map(x => x.grp || ""))].sort((a,b) => (a === "") - (b === "") || a.localeCompare(b, "ko"));
   $("#tree").innerHTML = mineHtml + quickHtml + studyHtml + persHtml + groups.map(g => {
     const k = "g:" + g;
     const cs = shared.filter(c => (c.grp || "") === g), ls = locked.filter(d => (d.grp || "") === g);
-    return `<details class="grp" data-k="${esc(k)}" ${isOpen(k, true) ? "open" : ""}><summary>${esc(g || "미분류")}<span class="sub">${cs.length + ls.length}명</span></summary>
+    return `<details class="grp" data-k="${esc(k)}" ${isOpen(k, cs.some(c => myCand(c) || DB.sessions.some(s => s.candId === c.id && s.id === cur))) ? "open" : ""}><summary>${esc(g || "미분류")}<span class="sub">${cs.length + ls.length}명</span></summary>
       <div class="gin">${cs.map(candHtml).join("")}${ls.map(lockedHtml).join("")}</div></details>`;
   }).join("") + `<button class="leaf add" style="padding-left:6px" id="newCand">+ 응시자 추가</button>`
     + `<button class="leaf add" style="padding-left:6px" id="newStudy" title="서로 봐주는 동기 4~5명이 비공개로 함께 쓰는 폴더">+ 스터디 만들기</button>`;
@@ -851,12 +874,12 @@ $("#tree").onclick = async e => {
   else if (n) openSessDlg(n.dataset.new);
   else if (e.target.closest("[data-edit]")) openCandDlg(DB.cands.find(c => c.id === e.target.closest("[data-edit]").dataset.edit));
   else if (e.target.id === "newCand") openCandDlg(null);
-  else if (e.target.id === "newQuick") startQuick(e.target);
   else if (e.target.closest("[data-st-new]")) openCandDlg(null, e.target.closest("[data-st-new]").dataset.stNew);
   else if (e.target.closest("[data-st]")) openStudy(e.target.closest("[data-st]").dataset.st);
   else if (e.target.id === "newStudy") newStudy();
 };
 // 즉석 면접: 숨은 개인 응시자 + 오늘 세션을 한 번에 만들고 바로 연다. 정식 응시자로 바꾸려면 정보 수정.
+$("#quickTop").onclick = e => { if (DB) startQuick(e.currentTarget); };
 function startQuick(btn){
   lockBtn(btn, async () => {
     await flush();
@@ -1115,13 +1138,27 @@ $("#cForm").onsubmit = e => {
 
 /* ---------- 스터디 ---------- */
 let curStudy = null, stDelArmed = false;
+// 그룹원 이름 칸: 가입자 목록을 "이름 <이메일>"로 띄우고, 고르면 이름·이메일 칸을 나눠 채운다. 목록에 없는 사람은 그냥 이름을 쓴다.
+function fillMemNames(){
+  $("#memNames").innerHTML = DB.members.filter(m => m.email !== DB.me.email).sort((a,b) => a.name.localeCompare(b.name, "ko"))
+    .map(m => `<option value="${esc(m.name)} <${esc(m.email)}>">`).join("");
+}
+function pickMember(nameEl, emailEl){
+  const m = nameEl.value.match(/^(.*?)\s*<([^>]+)>$/);
+  if (m) { nameEl.value = m[1].trim(); emailEl.value = m[2].trim(); emailEl.focus(); return; }
+  // 이름만 쳤는데 가입자 중 그 이름이 한 명뿐이면 이메일을 채운다
+  const hit = DB.members.filter(x => x.name === nameEl.value.trim() && x.email !== DB.me.email);
+  if (hit.length === 1 && !emailEl.value) emailEl.value = hit[0].email;
+}
+$("#snMName").addEventListener("input", () => pickMember($("#snMName"), $("#snEmail")));
+$("#stName").addEventListener("input", () => pickMember($("#stName"), $("#stEmail")));
 // 스터디 만들기: 이름 + 처음 초대할 그룹원을 한 화면에서. 만들고 나면 그 스터디 폴더를 펼친다.
 let snList = [], snNames = {};
 function newStudy(){
   snList = []; snNames = {};
   $("#snName").value = ""; $("#snMName").value = ""; $("#snEmail").value = "";
   $("#snMemList").innerHTML = DB.members.filter(m => m.email !== DB.me.email).map(m => `<option value="${esc(m.email)}">${esc(m.name)}</option>`).join("");
-  renderSnInv(); $("#snDlg").showModal(); $("#snName").focus();
+  fillMemNames(); renderSnInv(); $("#snDlg").showModal(); $("#snName").focus();
 }
 function renderSnInv(){
   $("#snInv").innerHTML = `<span class="chip">${esc(DB.me.name)} · 그룹장</span>` + snList.map(e => `<span class="chip">${esc(snNames[e] || nameOf(e))}<button type="button" data-snx="${esc(e)}" aria-label="${esc(e)} 빼기">×</button></span>`).join("");
@@ -1163,7 +1200,7 @@ $("#snForm").onsubmit = e => {
 function openStudy(id){
   curStudy = id; stDelArmed = false; $("#stDel").textContent = "스터디 삭제";
   $("#stName").value = ""; $("#stEmail").value = "";
-  renderStudy(); $("#stDlg").showModal();
+  fillMemNames(); renderStudy(); $("#stDlg").showModal();
 }
 function renderStudy(){
   const g = DB.groups.find(x => x.id === curStudy); if (!g) { $("#stDlg").close(); return; }
