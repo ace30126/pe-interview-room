@@ -408,6 +408,7 @@ textarea.paste{width:100%;min-height:150px;font-family:var(--font-num);font-size
       <select id="cField"><option>정보관리기술사</option><option>컴퓨터시스템응용기술사</option><option>정보통신기술사</option><option>기타</option></select>
       <label for="cRound">회차</label><input type="text" id="cRound" placeholder="예: 140">
       <label for="cGrp">그룹</label><input type="text" id="cGrp" list="grpList" placeholder="예: 139재기회 (목록에서 고르거나 새로 입력)"><datalist id="grpList"></datalist>
+      <label for="cStudy" id="cStudyL">스터디</label><select id="cStudy"></select>
       <span style="color:var(--muted);font-size:13px;align-self:start">공개 범위</span>
       <label class="pchk"><input type="checkbox" id="cPersonal"><span><b>개인 응시자</b><br>공용 목록에 올리지 않습니다. 나와 초대한 사람·면접위원만 이 응시자를 봅니다</span></label>
       <label for="cEmail">응시자 이메일</label><input type="text" id="cEmail" placeholder="선택. 넣으면 응시자 본인도 자기 기록을 봅니다">
@@ -436,6 +437,19 @@ textarea.paste{width:100%;min-height:150px;font-family:var(--font-num);font-size
     <header><h2>면접위원 초대</h2><span class="muted" style="font-size:12px" id="iCount"></span><button class="btn ghost x" data-close>완료</button></header>
     <div class="filters"><input type="search" id="iSearch" placeholder="이름이나 이메일로 검색" aria-label="면접위원 검색"></div>
     <div class="ivlist" id="iList"></div>
+  </div>
+</dialog>
+
+<dialog id="stDlg" class="small">
+  <div class="dlg">
+    <header><h2 id="stTitle">스터디</h2><span class="muted" style="font-size:12px" id="stCount"></span><button class="btn ghost x" data-close>닫기</button></header>
+    <div class="body">
+      <p class="muted" style="font-size:12.5px;margin:0 0 8px">그룹원은 이 스터디의 응시자를 모두 보고 기록할 수 있습니다. 스터디 밖 사람에게는 보이지 않습니다.</p>
+      <div class="ivlist" id="stList"></div>
+      <div class="invRow" id="stAddRow" style="margin-top:10px"><input type="text" id="stName" placeholder="이름" aria-label="초대할 그룹원 이름">
+        <input type="text" id="stEmail" placeholder="Google 이메일, Enter로 초대" aria-label="초대할 그룹원 이메일"></div>
+    </div>
+    <footer><button type="button" class="btn ghost" id="stDel" style="margin-right:auto;color:var(--over)" hidden>스터디 삭제</button><button type="button" class="btn" id="stInvite">초대</button></footer>
   </div>
 </dialog>
 
@@ -524,11 +538,13 @@ async function notesOf(cardIds){
 // 화면 코드는 예전 Apps Script 응답 모양 그대로 쓴다. 여기서 Supabase 호출로 바꿔 준다.
 const API = {
   async boot(){
-    const [mem, cands, sess, dir] = (await Promise.all([
+    const [mem, cands, sess, dir, grps, gms] = (await Promise.all([
       sb.from("pe_members").select("email,name,role,active"),
-      sb.from("pe_candidates").select("id,name,field,round,email,memo,img_path,created_by,invited,grp,personal,quick").order("created_at"),
+      sb.from("pe_candidates").select("id,name,field,round,email,memo,img_path,created_by,invited,grp,personal,quick,group_id").order("created_at"),
       sb.from("pe_sessions").select("id,cand_id,date,time,interviewers,plan_iv"),
       sb.rpc("pe_cand_dir_g"),
+      sb.from("pe_groups").select("id,name,owner,created_at").order("created_at"),
+      sb.from("pe_group_members").select("group_id,email,role,added_at").order("added_at"),
     ])).map(must);
     const me = mem.find(m => m.email === ME && m.active);
     if (!me) throw new Error("NOT_MEMBER:" + ME);
@@ -536,7 +552,9 @@ const API = {
       me: {email:ME, name:me.name || ME.split("@")[0], admin:me.role === "admin"},
       admins: mem.filter(m => m.active && m.role === "admin").map(m => m.email),
       members: mem.filter(m => m.active).map(m => ({email:m.email, name:m.name || m.email.split("@")[0]})),
-      cands: cands.map(c => ({id:c.id, name:c.name, field:c.field, round:c.round, email:c.email, memo:c.memo, hasImg:!!c.img_path, imgPath:c.img_path, createdBy:c.created_by, invited:c.invited || [], grp:c.grp || "", personal:!!c.personal, quick:!!c.quick})),
+      cands: cands.map(c => ({id:c.id, name:c.name, field:c.field, round:c.round, email:c.email, memo:c.memo, hasImg:!!c.img_path, imgPath:c.img_path, createdBy:c.created_by, invited:c.invited || [], grp:c.grp || "", personal:!!c.personal, quick:!!c.quick, groupId:c.group_id || ""})),
+      // 스터디: 내가 그룹원인 것만 온다(관리자는 전부). 그룹원 순서 = 들어온 순서 (면접위원 색 순서로도 쓴다)
+      groups: grps.map(g => ({id:g.id, name:g.name, owner:g.owner, members:gms.filter(m => m.group_id === g.id).map(m => ({email:m.email, role:m.role}))})),
       dir: dir.map(d => ({id:d.id, name:d.name, field:d.field, round:d.round, createdBy:d.created_by, invited:d.invited || [], grp:d.grp || ""})),
       sessions: sess.map(s => ({id:s.id, candId:s.cand_id, date:s.date, time:s.time || "", interviewers:s.interviewers, planIv:s.plan_iv || ""})),
     };
@@ -590,10 +608,11 @@ const API = {
     const isNew = !DB || !DB.cands.some(c => c.id === x.id);
     if (isNew) {
       must(await sb.from("pe_candidates").upsert({id:x.id, name:x.name, field:x.field || "", round:x.round || "",
-        email:(x.email || "").trim().toLowerCase(), invited:x.invited || [], created_by:ME, grp:x.grp || "", personal:!!x.personal, quick:!!x.quick}, {onConflict:"id", ignoreDuplicates:true}));
+        email:(x.email || "").trim().toLowerCase(), invited:x.invited || [], created_by:ME, grp:x.grp || "", personal:!!x.personal, quick:!!x.quick, group_id:x.groupId || null}, {onConflict:"id", ignoreDuplicates:true}));
     } else {
       const patch = {};
       ["name","field","round","email","memo","invited","grp","personal","quick"].forEach(k => { if (k in x) patch[k] = k === "email" ? String(x[k]).trim().toLowerCase() : x[k]; });
+      if ("groupId" in x) patch.group_id = x.groupId || null;
       must(await sb.from("pe_candidates").update(patch).eq("id", x.id));
     }
     return withBoot ? {id:x.id, boot:await API.boot()} : x.id;
@@ -632,6 +651,23 @@ const API = {
   },
   async deleteSession({id}){
     if (id) must(await sb.from("pe_sessions").delete().eq("id", id));
+    return {boot:await API.boot()};
+  },
+  // 스터디: 쓰기는 전부 RPC (그룹원을 응시자 invited에 맞추는 일은 DB 트리거가 한다)
+  async studyCreate({name}){
+    const id = must(await sb.rpc("pe_group_create", {pname:name}));
+    return {id, boot:await API.boot()};
+  },
+  async studyAdd({id, emails, names}){
+    must(await sb.rpc("pe_group_add", {gid:id, emails, names}));
+    return {boot:await API.boot()};
+  },
+  async studyRemove({id, email}){
+    must(await sb.rpc("pe_group_remove", {gid:id, pemail:email}));
+    return {boot:await API.boot()};
+  },
+  async studyDelete({id}){
+    must(await sb.rpc("pe_group_delete", {gid:id}));
     return {boot:await API.boot()};
   },
   async gichul(){
@@ -708,6 +744,11 @@ function canWrite(s){
   const me = DB.me.email;
   return DB.me.admin || s.interviewers.includes(me) || c.createdBy === me || (c.invited || []).includes(me) || c.email === me;
 }
+// DB 정책 pe_sealed_for_me와 같은 조건
+function sealedForMe(s){
+  const c = DB.cands.find(x => x.id === s.candId) || {}, me = DB.me.email;
+  return !DB.me.admin && !!c.email && c.email === me && !s.endedAt && s.createdBy !== me && !s.interviewers.includes(me);
+}
 function renderTree(){
   const mine = new Set(DB.cands.map(c => c.id));
   const isOpen = (k, def) => TREE_OPEN[k] === undefined ? def : TREE_OPEN[k];
@@ -734,7 +775,13 @@ function renderTree(){
       <div class="locked">${esc(String(d.field).replace("기술사",""))}${d.round?` · ${esc(d.round)}회`:""}<br>열람하시려면 관리자나 이 응시자의 면접위원에게 초대를 요청하세요</div></details>`;
   const locked = DB.dir.filter(d => !mine.has(d.id));
   // 개인 응시자는 그룹 폴더 대신 "개인 응시자" 폴더 하나에 모은다 (공용 목록에는 안 뜬다)
-  const pers = DB.cands.filter(c => c.personal && !quickIds.has(c.id)), shared = DB.cands.filter(c => !c.personal);
+  const pers = DB.cands.filter(c => c.personal && !quickIds.has(c.id) && !c.groupId), shared = DB.cands.filter(c => !c.personal);
+  // 스터디: 그룹원끼리만 보는 비공개 폴더. 그룹원이 아닌 관리자에게는 응시자가 없는 스터디는 안 보인다.
+  const studyHtml = DB.groups.filter(g => g.members.some(m => m.email === DB.me.email) || DB.cands.some(c => c.groupId === g.id)).map(g => {
+    const k = "st:" + g.id, cs = DB.cands.filter(c => c.groupId === g.id);
+    return `<details class="grp" data-k="${esc(k)}" ${isOpen(k, true) ? "open" : ""}><summary>스터디 · ${esc(g.name)}<span class="sub">${g.members.length}명 · 비공개</span></summary><div class="gin">
+      ${cs.map(candHtml).join("")}<button class="leaf add" data-st-new="${esc(g.id)}">+ 응시자 추가</button><button class="leaf add" data-st="${esc(g.id)}">그룹원 관리</button></div></details>`;
+  }).join("");
   const persHtml = pers.length ? `<details class="grp" data-k="personal" ${isOpen("personal", true) ? "open" : ""}><summary>개인 응시자<span class="sub">${pers.length}명 · 비공개</span></summary><div class="gin">${pers.map(candHtml).join("")}</div></details>` : "";
   // 즉석 면접: 마지막 세션이 30일 지난 것은 아래 "30일 지난 즉석 면접"에 접어 둔다 (지우지 않는다)
   const lastDate = c => DB.sessions.filter(s => s.candId === c.id).map(s => String(s.date)).sort().pop() || "";
@@ -746,12 +793,13 @@ function renderTree(){
     + (qOld.length ? `<details class="grp" data-k="quickOld" ${isOpen("quickOld", false) ? "open" : ""}><summary>30일 지난 즉석 면접<span class="sub">${qOld.length}건</span></summary><div class="gin">${qOld.map(candHtml).join("")}</div></details>` : "")
     + `</div></details>`;
   const groups = [...new Set([...shared, ...locked].map(x => x.grp || ""))].sort((a,b) => (a === "") - (b === "") || a.localeCompare(b, "ko"));
-  $("#tree").innerHTML = mineHtml + quickHtml + persHtml + groups.map(g => {
+  $("#tree").innerHTML = mineHtml + quickHtml + studyHtml + persHtml + groups.map(g => {
     const k = "g:" + g;
     const cs = shared.filter(c => (c.grp || "") === g), ls = locked.filter(d => (d.grp || "") === g);
     return `<details class="grp" data-k="${esc(k)}" ${isOpen(k, true) ? "open" : ""}><summary>${esc(g || "미분류")}<span class="sub">${cs.length + ls.length}명</span></summary>
       <div class="gin">${cs.map(candHtml).join("")}${ls.map(lockedHtml).join("")}</div></details>`;
-  }).join("") + `<button class="leaf add" style="padding-left:6px" id="newCand">+ 응시자 추가</button>`;
+  }).join("") + `<button class="leaf add" style="padding-left:6px" id="newCand">+ 응시자 추가</button>`
+    + `<button class="leaf add" style="padding-left:6px" id="newStudy" title="서로 봐주는 동기 4~5명이 비공개로 함께 쓰는 폴더">+ 스터디 만들기</button>`;
 }
 $("#tree").addEventListener("toggle", e => { const k = e.target.dataset && e.target.dataset.k; if (k) TREE_OPEN[k] = e.target.open; }, true);
 $("#tree").onclick = async e => {
@@ -761,6 +809,9 @@ $("#tree").onclick = async e => {
   else if (e.target.closest("[data-edit]")) openCandDlg(DB.cands.find(c => c.id === e.target.closest("[data-edit]").dataset.edit));
   else if (e.target.id === "newCand") openCandDlg(null);
   else if (e.target.id === "newQuick") startQuick(e.target);
+  else if (e.target.closest("[data-st-new]")) openCandDlg(null, e.target.closest("[data-st-new]").dataset.stNew);
+  else if (e.target.closest("[data-st]")) openStudy(e.target.closest("[data-st]").dataset.st);
+  else if (e.target.id === "newStudy") newStudy(e.target);
 };
 // 즉석 면접: 숨은 개인 응시자 + 오늘 세션을 한 번에 만들고 바로 연다. 정식 응시자로 바꾸려면 정보 수정.
 function startQuick(btn){
@@ -810,10 +861,15 @@ async function openSession(id){
   active = null; pendingImg = null; replacing = false;
   try { S = await call("session", {id}); } catch(e){ toast("세션을 열지 못했습니다: "+e.message); return; }
   $("#adminView").hidden = true;
-  S.ro = !canWrite(S.session);
+  // 응시자 본인은 면접 종료 전에는 질문지를 못 본다 (DB가 카드·기록을 안 내준다). 내가 만든 세션·내가 면접위원인 세션은 예외.
+  S.sealed = sealedForMe(S.session);
+  S.ro = S.sealed || !canWrite(S.session);
   // 읽기 전용이면 답변 기록·총평·질문별 시간은 화면에 들고 있지도 않는다
   if (S.ro) { S.session.overall = ""; S.session.memo = ""; S.cards.forEach(c => { c.notes = {}; c.t = 0; }); }
+  if (S.sealed) S.cards = [];
   $("#room").classList.toggle("ro", S.ro); $("#roBar").hidden = !S.ro;
+  $("#roBar").textContent = S.sealed ? "내가 응시자인 면접입니다 · 질문지와 기록은 면접위원이 [면접 종료]를 누른 뒤에 보입니다"
+    : "같은 응시자의 다른 회차입니다 · 읽기 전용 · 질문과 총 시간만 보이고 답변 기록·총평은 가려집니다 (요약 메모와 이력카드는 함께 씁니다)";
   ["#dateIn","#timeIn","#meetIn","#overall","#sumText"].forEach(q => $(q).disabled = S.ro);
   $("#delSess").hidden = S.ro;
   S.cards.forEach(c => c.myNote = c.notes[DB.me.email] || "");
@@ -941,7 +997,23 @@ function takeInv(){
   renderInv(); $("#cInvName").focus();
   return true;
 }
-function openCandDlg(c){
+// 스터디 선택: 내가 그룹원인 스터디만. 스터디에 넣으면 비공개로 고정된다. 등록한 사람만 바꾼다.
+function renderStudySel(c, gid){
+  const mine = DB.groups.filter(g => g.members.some(m => m.email === DB.me.email) || (c && c.groupId === g.id));
+  const sel = $("#cStudy");
+  sel.innerHTML = `<option value="">(없음)</option>` + mine.map(g => `<option value="${esc(g.id)}">${esc(g.name)}</option>`).join("");
+  sel.value = c ? (c.groupId || "") : (gid || "");
+  sel.disabled = !!c && !(DB.me.admin || c.createdBy === DB.me.email);
+  $("#cStudy").hidden = $("#cStudyL").hidden = !mine.length;
+  syncStudyPersonal();
+}
+function syncStudyPersonal(){
+  const on = !!$("#cStudy").value;
+  if (on) $("#cPersonal").checked = true;
+  $("#cPersonal").disabled = on || (!!editingCand && !(DB.me.admin || editingCand.createdBy === DB.me.email));
+}
+$("#cStudy").onchange = syncStudyPersonal;
+function openCandDlg(c, gid){
   editingCand = c;
   newCandId = c ? null : "c"+rid();
   // 즉석 면접을 열면 "정식 응시자로 전환" 대화상자가 된다. 저장하면 quick이 풀린다.
@@ -953,6 +1025,7 @@ function openCandDlg(c){
   $("#cGrp").value = c ? (c.grp || "") : ((cand() && cand().grp) || (grps.length === 1 ? grps[0] : ""));
   $("#cPersonal").checked = c && !c.quick ? !!c.personal : false;
   $("#cPersonal").disabled = !!c && !(DB.me.admin || c.createdBy === DB.me.email);
+  renderStudySel(c, gid);
   invList = c ? [...c.invited] : []; invNames = {}; $("#cInvIn").value = ""; $("#cInvName").value = ""; renderInv();
   $("#cDel").hidden = !c || !(DB.me.admin || c.createdBy === DB.me.email);
   $("#cDel").textContent = "응시자 삭제"; cDelArmed = false;
@@ -979,6 +1052,8 @@ $("#cForm").onsubmit = e => {
   e.preventDefault();
   const x = {name:$("#cName").value.trim(), field:$("#cField").value, round:$("#cRound").value.trim(), email:$("#cEmail").value.trim(), grp:$("#cGrp").value.trim()};
   if (!$("#cPersonal").disabled) x.personal = $("#cPersonal").checked;
+  if (!$("#cStudy").disabled && !$("#cStudy").hidden) x.groupId = $("#cStudy").value;
+  if (x.groupId) x.personal = true;
   x.id = editingCand ? editingCand.id : newCandId;
   const converting = !!(editingCand && editingCand.quick);
   if (converting) x.quick = false;
@@ -990,6 +1065,64 @@ $("#cForm").onsubmit = e => {
       DB = r.boot; renderTree(); if (S) renderCand();
       toast(converting ? `정식 응시자로 바꿨습니다${x.personal ? " (개인 응시자)" : ""}` : editingCand ? "응시자 정보를 저장했습니다" : "응시자를 추가했습니다. 이름 아래 + 새 세션으로 면접을 시작하세요.");
     } catch(err){ toast("저장하지 못했습니다: "+err.message); }
+  });
+};
+
+/* ---------- 스터디 ---------- */
+let curStudy = null, stDelArmed = false;
+function newStudy(btn){
+  const n = (prompt("스터디 이름을 입력하세요 (예: 140회 화요 스터디)") || "").trim();
+  if (!n) return;
+  lockBtn(btn, async () => {
+    try { const r = await call("studyCreate", {name:n.slice(0, 40)}); DB = r.boot; renderTree(); openStudy(r.id); toast("스터디를 만들었습니다. 그룹원을 초대하세요"); }
+    catch(e){ toast("만들지 못했습니다: " + e.message); }
+  });
+}
+function openStudy(id){
+  curStudy = id; stDelArmed = false; $("#stDel").textContent = "스터디 삭제";
+  $("#stName").value = ""; $("#stEmail").value = "";
+  renderStudy(); $("#stDlg").showModal();
+}
+function renderStudy(){
+  const g = DB.groups.find(x => x.id === curStudy); if (!g) { $("#stDlg").close(); return; }
+  const me = DB.me.email, boss = DB.me.admin || g.owner === me, inG = g.members.some(m => m.email === me);
+  $("#stTitle").textContent = "스터디 · " + g.name;
+  $("#stCount").textContent = `${g.members.length}명`;
+  $("#stList").innerHTML = g.members.map(m => {
+    const own = m.role === "owner", self = m.email === me;
+    const act = own ? `<span class="st">그룹장</span>` : (boss || self) ? `<button type="button" class="btn sm" data-strm="${esc(m.email)}">${self ? "나가기" : "빼기"}</button>` : "";
+    return `<div class="ivrow"><span class="av">${esc(nameOf(m.email).slice(0,1))}</span><span class="who">${esc(nameOf(m.email))}<small>${esc(m.email)}</small></span>${act}</div>`;
+  }).join("");
+  $("#stAddRow").hidden = $("#stInvite").hidden = !(inG || DB.me.admin);
+  $("#stDel").hidden = !boss;
+}
+// 처음 초대하는 사람은 이름이 있어야 한다 (응시자 초대와 같은 규칙)
+function studyInvite(){
+  const e = $("#stEmail").value.trim().toLowerCase(), n = $("#stName").value.trim();
+  if (!EMAIL_RE.test(e)) { toast("이메일 형식이 아닙니다"); $("#stEmail").focus(); return; }
+  const known = DB.members.find(m => m.email === e && m.name && m.name !== e.split("@")[0]);
+  if (!known && !n) { toast("처음 초대하는 분은 이름을 입력하세요"); $("#stName").focus(); return; }
+  lockBtn($("#stInvite"), async () => {
+    try { const r = await call("studyAdd", {id:curStudy, emails:[e], names:[n || (known && known.name) || ""]}); DB = r.boot; renderTree(); renderStudy();
+      $("#stName").value = ""; $("#stEmail").value = ""; $("#stName").focus(); toast(`${n || nameOf(e)} 님을 초대했습니다`); }
+    catch(err){ toast("초대하지 못했습니다: " + err.message); }
+  });
+}
+$("#stInvite").onclick = studyInvite;
+["stName","stEmail"].forEach(id => $("#"+id).addEventListener("keydown", e => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); studyInvite(); } }));
+$("#stList").onclick = async e => {
+  const b = e.target.closest("[data-strm]"); if (!b) return;
+  const em = b.dataset.strm, self = em === DB.me.email;
+  if (!confirm(self ? "이 스터디에서 나갈까요? 스터디 응시자가 더 이상 보이지 않습니다(내가 등록한 응시자는 계속 보입니다)." : `${nameOf(em)} 님을 스터디에서 뺄까요?`)) return;
+  try { const r = await call("studyRemove", {id:curStudy, email:em}); DB = r.boot; renderTree();
+    if (self) $("#stDlg").close(); else renderStudy(); toast(self ? "스터디에서 나왔습니다" : "뺐습니다"); }
+  catch(err){ toast(err.message); }
+};
+$("#stDel").onclick = () => {
+  if (!stDelArmed) { stDelArmed = true; $("#stDel").textContent = "응시자·기록은 남습니다. 한 번 더 누르면 삭제"; return; }
+  lockBtn($("#stDel"), async () => {
+    try { const r = await call("studyDelete", {id:curStudy}); DB = r.boot; renderTree(); $("#stDlg").close(); toast("스터디를 삭제했습니다"); }
+    catch(err){ toast(err.message); }
   });
 };
 
@@ -1080,7 +1213,7 @@ function renderCards(){
       <div class="others" data-others>${othersHtml(c)}</div>
       ${c.ans?`<details><summary>모범답안 보기</summary><p>${esc(c.ans)}</p></details>`:""}
     </article>`;
-  }).join("") || `<div class="panel empty-msg">아직 질문 카드가 없습니다. 기출문제 탐색이나 + 질문으로 추가하세요.</div>`;
+  }).join("") || (S.sealed ? `<div class="panel empty-msg">면접이 끝나면 질문지와 면접위원 기록이 여기에 열립니다.</div>` : "") || `<div class="panel empty-msg">아직 질문 카드가 없습니다. 기출문제 탐색이나 + 질문으로 추가하세요.</div>`;
   document.querySelectorAll("#cards textarea").forEach(grow);
   if (S.ro) document.querySelectorAll("#cards textarea, #cards input, #cards button").forEach(el => el.disabled = true);
   // 이 세션에서 쓴 태그를 자동완성 후보로
