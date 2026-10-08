@@ -153,7 +153,9 @@ select,input[type=text],input[type=search]{background:var(--sheet);border:1px so
 .qcard .q{font-weight:500;line-height:1.45;display:flex;gap:6px;align-items:baseline;flex-wrap:wrap}
 .qcard .q span.text{flex:1 1 20ch}
 .qcard .ctrl{display:flex;align-items:center;gap:4px;align-self:start}
-.qcard .time{font-size:15px;font-weight:600;min-width:46px;text-align:right}
+.qcard .time{font-size:15px;font-weight:600;min-width:46px;text-align:right;background:none;border:0;border-bottom:1px dashed transparent;padding:0;color:inherit;font-family:inherit;cursor:pointer}
+.qcard .time:hover:not(:disabled){border-bottom-color:currentColor}
+.qcard .time:disabled{cursor:default}
 .ib{width:28px;height:28px;border:1px solid var(--rule);background:var(--sheet);border-radius:4px;display:grid;place-items:center;padding:0}
 .ib svg{width:13px;height:13px;fill:currentColor}
 .ib.play{color:var(--ok)}
@@ -1007,7 +1009,7 @@ function renderCards(){
       <span class="grip" draggable="true" title="끌어서 순서 바꾸기" aria-label="순서 바꾸기">⋮⋮</span>
       <div class="q">${head}${qBody}</div>
       <div class="ctrl">
-        <span class="time num" data-time>${fmt(c.t)}</span>
+        <button class="time num" data-time data-act="settime" title="눌러서 답변 시간 직접 입력" aria-label="답변 시간 ${fmt(c.t)}, 눌러서 수정">${fmt(c.t)}</button>
         <button class="ib play" data-act="toggle" aria-label="${run?"일시정지":"재생"}">${run?ICON.pause:ICON.play}</button>
         <button class="ib" data-act="reset" aria-label="초기화">${ICON.reset}</button>
         ${canEdit?`<button class="ib del" data-act="edit" aria-label="질문 수정" title="질문 수정">${ICON.edit}</button>`:""}
@@ -1061,12 +1063,23 @@ $("#cards").addEventListener("click", e => {
   const c = findCard(b);
   if (b.dataset.act === "toggle") active = active === c.id ? null : c.id;
   if (b.dataset.act === "reset") { c.t = 0; if (active === c.id) active = null; dirty = true; }
+  // [▶]를 깜빡했을 때 답변 시간을 손으로 고친다. "2:30" = 2분 30초, 숫자 하나 = 분
+  if (b.dataset.act === "settime") {
+    if (active === c.id) active = null;
+    const v = prompt("답변 시간을 분:초로 입력하세요 (예: 2:30)", fmt(c.t));
+    if (v === null) { renderCards(); return; }
+    const p = v.match(/\d+/g);
+    if (!p || p.length > 2) { toast("분:초 형식으로 입력하세요 (예: 2:30)"); return; }
+    const sec = p.length === 2 ? +p[0] * 60 + +p[1] : +p[0] * 60;
+    if (p.length === 2 && +p[1] > 59) { toast("초는 0~59로 입력하세요"); return; }
+    c.t = sec; dirty = true;
+  }
   if (b.dataset.act === "edit") { editing = c.id; renderCards(); const i = document.querySelector(`[data-id="${c.id}"] [data-qedit]`); i?.focus(); i?.select(); return; }
   if (b.dataset.act === "del") {
     const used = c.t > 0 || c.myNote || Object.values(c.notes || {}).some(Boolean);
     if (used && !confirm("이 카드에는 측정 시간이나 기록이 있습니다. 카드를 삭제할까요?")) return;
     S.cards = S.cards.filter(x => x !== c); if (active === c.id) active = null; if (editing === c.id) editing = null; dirty = true; }
-  if (["toggle","reset","del"].includes(b.dataset.act)) markClock();
+  if (["toggle","reset","del","settime"].includes(b.dataset.act)) markClock();
   renderCards(); updateTotal();
 });
 $("#cards").addEventListener("input", e => {
@@ -1234,6 +1247,7 @@ function renderReport(){
     <div class="col"><h3>모의면접 결과 · ${esc(c.name)}</h3>
       <div class="meta">${s.date} · ${esc(c.field)}${c.round?` ${esc(c.round)}회`:""} · 면접위원 ${ivs.map(e => esc(nameOf(e))).join(", ")}</div>
       <div class="kpi"><div>총 시간<b>${fmt(total())}</b></div><div>질문<b>${S.cards.length}개</b></div></div>
+      ${c.memo?`<h3>이력카드 요약 메모</h3><div class="box">${esc(c.memo)}</div>`:""}
       <h3>총평</h3><div class="box">${esc(s.overall || "(총평 미입력)")}</div>
       ${items.length?`<h3>질문별 피드백</h3>`:""}
     </div><span class="pg"></span></div></div>`;
