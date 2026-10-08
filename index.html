@@ -104,6 +104,8 @@ select,input[type=text],input[type=search]{background:var(--sheet);border:1px so
 .robar{margin:0 0 10px;padding:7px 12px;border-radius:6px;background:var(--accent-soft);color:var(--accent);font-size:13px}
 .room.ro #addBtn,.room.ro #gichulBtn,.room.ro .tags input,.room.ro .tags .chip button,.room.ro .ctrl button{display:none}
 .room.ro .grip{visibility:hidden}
+/* 다른 면접위원의 회차: 이력카드·질문·총 시간만 보인다 */
+.room.ro .overall,.room.ro #pdfBtn,.room.ro [data-note],.room.ro [data-others],.room.ro .qcard .time{display:none}
 .ivs .chip.plan{background:none;border:1px dashed var(--rule);color:var(--muted)}
 .timeIn{width:7.5em}
 #verInfo{font-size:11.5px;color:var(--muted)}
@@ -225,6 +227,7 @@ dialog.report{width:min(1060px,calc(100% - 32px))}
 .inv .chip button{border:0;background:none;color:var(--muted);cursor:pointer;padding:0 0 0 4px}
 .invBox{display:flex;flex-direction:column;gap:6px}
 .tree .locked{font-size:12px;color:var(--muted);padding:4px 8px 6px 22px}
+.tree .nolook{opacity:.4}
 .leaf .soon{margin-left:6px;font-size:11px;color:var(--accent)}
 .toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--paper);padding:8px 16px;border-radius:var(--r);font-size:13px;z-index:40}
 @media (prefers-reduced-motion:reduce){.side,.tree details>summary::before{transition:none}}
@@ -341,7 +344,7 @@ textarea.paste{width:100%;min-height:150px;font-family:var(--font-num);font-size
 
     <div class="blank" id="blank">왼쪽에서 응시자의 세션을 고르거나, <b>+ 응시자 추가</b>로 시작하세요.</div>
 
-    <div class="robar" id="roBar" hidden>같은 응시자의 다른 회차 기록입니다 · 읽기 전용 (요약 메모와 이력카드는 함께 씁니다)</div>
+    <div class="robar" id="roBar" hidden>같은 응시자의 다른 회차입니다 · 읽기 전용 · 질문과 총 시간만 보이고 답변 기록·총평은 가려집니다 (요약 메모와 이력카드는 함께 씁니다)</div>
     <div class="room" id="room" hidden>
       <aside class="panel cardpane">
         <header><span class="label">이력카드</span><span class="chip" id="candChip"></span><button class="btn sm ghost" id="editCand">정보 수정</button></header>
@@ -684,6 +687,7 @@ async function boot(){
 }
 
 /* ---------- 사이드바 ---------- */
+const maskName = n => { const a = [...String(n || "")]; return a.length ? a[0] + "○".repeat(Math.max(a.length - 1, 1)) : "○○"; };
 const sKey = s => String(s.date) + (s.time || "");
 const sWhen = s => md(s.date) + (s.time ? " " + s.time : "");
 const ivNames = s => s.planIv ? s.planIv : [...new Set(s.interviewers.map(nameOf))].join(", ");
@@ -712,7 +716,8 @@ function renderTree(){
       <button class="leaf add" data-new="${c.id}">+ 새 세션</button>
       <button class="leaf add" data-edit="${c.id}">정보 수정·삭제</button></details>`;
   };
-  const lockedHtml = d => `<details><summary>${esc(d.name)}<span class="sub">초대 필요</span></summary>
+  // 열람 권한 없는 응시자는 이름을 가리고(첫 글자만) 흐리게 표시
+  const lockedHtml = d => `<details class="nolook"><summary>${esc(maskName(d.name))}<span class="sub">초대 필요</span></summary>
       <div class="locked">${esc(String(d.field).replace("기술사",""))}${d.round?` · ${esc(d.round)}회`:""}<br>열람하시려면 관리자나 이 응시자의 면접위원에게 초대를 요청하세요</div></details>`;
   const locked = DB.dir.filter(d => !mine.has(d.id));
   const groups = [...new Set([...DB.cands, ...locked].map(x => x.grp || ""))].sort((a,b) => (a === "") - (b === "") || a.localeCompare(b, "ko"));
@@ -762,6 +767,8 @@ async function openSession(id){
   try { S = await call("session", {id}); } catch(e){ toast("세션을 열지 못했습니다: "+e.message); return; }
   $("#adminView").hidden = true;
   S.ro = !canWrite(S.session);
+  // 읽기 전용이면 답변 기록·총평·질문별 시간은 화면에 들고 있지도 않는다
+  if (S.ro) { S.session.overall = ""; S.cards.forEach(c => { c.notes = {}; c.t = 0; }); }
   $("#room").classList.toggle("ro", S.ro); $("#roBar").hidden = !S.ro;
   ["#dateIn","#timeIn","#meetIn","#overall"].forEach(q => $(q).disabled = S.ro);
   $("#delSess").hidden = S.ro;
