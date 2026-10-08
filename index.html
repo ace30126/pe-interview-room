@@ -150,6 +150,10 @@ select,input[type=text],input[type=search]{background:var(--sheet);border:1px so
 .qcard{padding:8px 10px 8px 4px;display:grid;grid-template-columns:18px minmax(0,1fr) auto;gap:4px 8px;border-left:3px solid transparent}
 .qcard.running{border-left-color:var(--ok);background:color-mix(in srgb,var(--ok-soft) 55%,var(--sheet))}
 .qcard.dragging{opacity:.45}
+.qcard .byc{display:inline-grid;place-items:center;width:18px;height:18px;border-radius:50%;color:#fff;font-size:11px;font-weight:700;flex:none;align-self:center}
+.qcard .runby{font-size:11px;color:var(--ok);white-space:nowrap}
+#meta .legend{display:inline-flex;flex-wrap:wrap;gap:4px 10px;margin-left:10px}
+#meta .legend i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px;vertical-align:1px}
 .grip{grid-row:1/span 4;align-self:stretch;display:grid;place-items:start center;padding-top:3px;color:var(--muted);cursor:grab;user-select:none;font-size:13px;letter-spacing:-2px}
 .grip:active{cursor:grabbing}
 .qcard .q{font-weight:500;line-height:1.45;display:flex;gap:6px;align-items:baseline;flex-wrap:wrap}
@@ -630,7 +634,7 @@ const API = {
   async newSession({id, candId, date, cards}){
     must(await sb.from("pe_sessions").upsert({id, cand_id:candId, date, interviewers:[ME], created_by:ME}, {onConflict:"id", ignoreDuplicates:true}));
     const have = must(await sb.from("pe_cards").select("id").eq("session_id", id));
-    if (!have.length) must(await sb.rpc("pe_save_session", {p:{id, cards}}));
+    if (!have.length) must(await sb.rpc("pe_save_session2", {p:{id, cards:cards.map((c, i) => Object.assign({ord:i}, c))}}));
     return {id, boot:await API.boot()};
   },
   async session({id}){
@@ -640,12 +644,14 @@ const API = {
     ])).map(must);
     const notes = await notesOf(cards.map(c => c.id));
     return {
-      session: {id:s.id, candId:s.cand_id, date:s.date, time:s.time || "", planIv:s.plan_iv || "", interviewers:s.interviewers, meet:s.meet, overall:s.overall, memo:s.memo || "", createdBy:s.created_by, startedAt:s.started_at || "", endedAt:s.ended_at || ""},
-      cards: cards.map(c => ({id:c.id, q:c.q, preset:c.preset, kind:c.kind, src:c.src, followups:c.followups || [], ans:c.ans, t:c.t, tags:c.tags || [], notes:notes[c.id] || {}})),
+      session: {id:s.id, candId:s.cand_id, date:s.date, time:s.time || "", planIv:s.plan_iv || "", interviewers:s.interviewers, meet:s.meet, overall:s.overall, memo:s.memo || "", createdBy:s.created_by, startedAt:s.started_at || "", endedAt:s.ended_at || "",
+        runCard:s.run_card || "", runSince:s.run_since ? Date.parse(s.run_since) : 0, runBy:s.run_by || ""},
+      cards: cards.map(c => ({id:c.id, q:c.q, preset:c.preset, kind:c.kind, src:c.src, followups:c.followups || [], ans:c.ans, t:c.t, tags:c.tags || [], by:c.created_by || "", ord:c.ord, notes:notes[c.id] || {}})),
     };
   },
+  // 바꾼 것만 보낸다 (pe_save_session2). 여러 면접위원이 동시에 열어도 남의 카드·시간을 덮어쓰지 않는다.
   async saveSession(p){
-    must(await sb.rpc("pe_save_session", {p}));
+    must(await sb.rpc("pe_save_session2", {p}));
     const notes = await notesOf((p.cards || []).map(c => c.id));
     return {cards:(p.cards || []).map(c => ({id:c.id, notes:notes[c.id] || {}}))};
   },
@@ -709,6 +715,15 @@ const imgCache = {};      // 사진 경로 → dataURL
 const VERS = {};          // 응시자 id → [{id,path,since}] (since 오름차순)
 const TREE_OPEN = {};     // 사이드바 펼침 상태 (그룹·내 일정은 기본 펼침)
 let dirty = false, saving = false, memoDirty = false;
+// 저장 대기 목록: 바꾼 카드(cards)·시간을 손댄 카드(t)·기록만 쓴 카드(notes)·지운 카드(del)·순서·세션 필드
+const PEND = {cards:new Set(), t:new Set(), notes:new Set(), del:new Set(), order:false, sess:new Set()};
+const pendReset = () => { ["cards","t","notes","del","sess"].forEach(k => PEND[k].clear()); PEND.order = false; dirty = false; };
+const markCard = (c, withT) => { PEND.cards.add(c.id); if (withT) PEND.t.add(c.id); dirty = true; };
+const markNote = c => { PEND.notes.add(c.id); dirty = true; };
+const markSess = (...ks) => { ks.forEach(k => PEND.sess.add(k)); dirty = true; };
+const markOrder = () => { S.cards.forEach((c, i) => c.ord = i); PEND.order = true; dirty = true; };
+let skew = 0;             // 서버 시계 - 내 시계 (ms). 타이머는 서버 시계로 센다
+const nowS = () => Date.now() + skew;
 const cand = () => S && DB.cands.find(c => c.id === S.session.candId);
 const nameOf = email => (DB.members.find(m => m.email === email) || {}).name || email.split("@")[0];
 
@@ -716,6 +731,8 @@ async function boot(){
   const {data:{session}} = await sb.auth.getSession();
   if (!session) return gate("Google 계정으로 로그인해야 들어올 수 있습니다.");
   ME = String(session.user.email || "").toLowerCase();
+  // 실시간 구독도 로그인 토큰으로 (안 하면 anon으로 붙어 RLS가 변경 알림을 막는다)
+  try { sb.realtime.setAuth(session.access_token); } catch(e){}
   const gname = (session.user.user_metadata || {}).full_name || (session.user.user_metadata || {}).name || "";
   try { DB = await call("boot"); }
   catch(e){
@@ -867,6 +884,7 @@ async function openSession(id){
   // 읽기 전용이면 답변 기록·총평·질문별 시간은 화면에 들고 있지도 않는다
   if (S.ro) { S.session.overall = ""; S.session.memo = ""; S.cards.forEach(c => { c.notes = {}; c.t = 0; }); }
   if (S.sealed) S.cards = [];
+  pendReset(); active = S.session.runCard || null; needRender = false;
   $("#room").classList.toggle("ro", S.ro); $("#roBar").hidden = !S.ro;
   $("#roBar").textContent = S.sealed ? "내가 응시자인 면접입니다 · 질문지와 기록은 면접위원이 [면접 종료]를 누른 뒤에 보입니다"
     : "같은 응시자의 다른 회차입니다 · 읽기 전용 · 질문과 총 시간만 보이고 답변 기록·총평은 가려집니다 (요약 메모와 이력카드는 함께 씁니다)";
@@ -874,6 +892,7 @@ async function openSession(id){
   $("#delSess").hidden = S.ro;
   S.cards.forEach(c => c.myNote = c.notes[DB.me.email] || "");
   cur = id; store.set("pe_last", id);
+  live(id);
   $("#blank").hidden = true; $("#room").hidden = false; $("#sessTools").hidden = false;
   renderTree(); renderCand(); renderSessionBar(); renderCards();
   loadImage();
@@ -1147,13 +1166,13 @@ $("#timeIn").onchange = async e => {
 };
 $("#dateIn").onchange = e => {
   const v = e.target.value; if (!v) return;
-  S.session.date = v; dirty = true;
+  S.session.date = v; markSess("date");
   const row = DB.sessions.find(x => x.id === S.session.id); if (row) row.date = v;
   renderCand(); renderTree();
 };
 $("#ivs").addEventListener("click", e => {
   if (e.target.closest("#ivAdd")) { $("#iSearch").value = ""; renderIv(); $("#iDlg").showModal(); $("#iSearch").focus(); return; }
-  const b = e.target.closest("[data-rm]"); if (!b) return; const rm = b.dataset.rm.split(","); S.session.interviewers = S.session.interviewers.filter(x => !rm.includes(x)); dirty = true; renderSessionBar(); renderCards();
+  const b = e.target.closest("[data-rm]"); if (!b) return; const rm = b.dataset.rm.split(","); S.session.interviewers = S.session.interviewers.filter(x => !rm.includes(x)); markSess("interviewers"); renderSessionBar(); renderCards();
 });
 // 면접위원 초대 모달: 검색 + 눌러서 넣고 빼기 (나는 항상 포함)
 function renderIv(){
@@ -1171,9 +1190,9 @@ $("#iList").onclick = e => {
   const b = e.target.closest("[data-iv]"); if (!b) return;
   const em = b.dataset.iv, ivs = S.session.interviewers;
   S.session.interviewers = ivs.includes(em) ? ivs.filter(x => x !== em) : [...ivs, em];
-  dirty = true; renderIv(); renderSessionBar(); renderCards();
+  markSess("interviewers"); renderIv(); renderSessionBar(); renderCards();
 };
-$("#meetIn").oninput = e => { S.session.meet = e.target.value.trim(); dirty = true; };
+$("#meetIn").oninput = e => { S.session.meet = e.target.value.trim(); markSess("meet"); };
 $("#meetBtn").onclick = () => { const u = S.session.meet; if (!/^https:\/\/meet\.google\.com\//.test(u)) return toast("Meet 링크(https://meet.google.com/...)를 먼저 붙여넣으세요"); window.open(u, "meet", "width=960,height=720"); };
 let delArmed = false;
 $("#delSess").onclick = async () => {
@@ -1187,7 +1206,9 @@ $("#delSess").onclick = async () => {
 /* ---------- 질문 카드 ---------- */
 const tagOf = c => c.preset==="intro" ? `자기소개·${INTRO_LABEL[c.kind]||""}` : c.preset==="vision" ? "포부" : c.src || "";
 function renderCards(){
+  needRender = false;
   const multi = S.session.interviewers.length > 1;
+  const showColors = multi || new Set(S.cards.map(c => c.by).filter(Boolean)).size > 1;
   $("#cards").innerHTML = S.cards.map(c => {
     const run = active === c.id;
     const head = c.preset ? `<span class="tag preset">${c.preset==="intro"?"자기소개":"포부"}</span>` : c.src ? `<span class="tag gichul">${esc(c.src)}</span>` : "";
@@ -1196,11 +1217,14 @@ function renderCards(){
       : c.q && editing !== c.id ? `<span class="text" data-act="edit" title="눌러서 질문 수정">${esc(c.q)}</span>`
       : `<input class="qedit" data-qedit value="${esc(c.q||"")}" placeholder="질문을 입력하세요" aria-label="질문">`;
     const canEdit = c.q && editing !== c.id && !(c.preset==="intro" && c.kind==="etc");
-    return `<article class="panel qcard ${run?"running":""}" data-id="${c.id}">
+    const col = showColors ? colorOf(c.by) : "";
+    const byChip = col ? `<span class="byc" style="background:${col}" title="${esc(nameOf(c.by))} 질문">${esc(nameOf(c.by).slice(0,1))}</span>` : "";
+    const runner = run && S.session.runBy && S.session.runBy !== DB.me.email ? `<span class="runby">${esc(nameOf(S.session.runBy))} 진행</span>` : "";
+    return `<article class="panel qcard ${run?"running":""}" data-id="${c.id}"${col ? ` style="border-left-color:${col}"` : ""}>
       <span class="grip" draggable="true" title="끌어서 순서 바꾸기" aria-label="순서 바꾸기">⋮⋮</span>
-      <div class="q">${head}${qBody}</div>
+      <div class="q">${byChip}${head}${qBody}</div>
       <div class="ctrl">
-        <button class="time num" data-time data-act="settime" title="눌러서 답변 시간 직접 입력" aria-label="답변 시간 ${fmt(c.t)}, 눌러서 수정">${fmt(c.t)}</button>
+        ${runner}<button class="time num" data-time data-act="settime" title="눌러서 답변 시간 직접 입력" aria-label="답변 시간 ${fmt(liveT(c))}, 눌러서 수정">${fmt(liveT(c))}</button>
         <button class="ib play" data-act="toggle" aria-label="${run?"일시정지":"재생"}">${run?ICON.pause:ICON.play}</button>
         <button class="ib" data-act="reset" aria-label="초기화">${ICON.reset}</button>
         ${canEdit?`<button class="ib del" data-act="edit" aria-label="질문 수정" title="질문 수정">${ICON.edit}</button>`:""}
@@ -1222,72 +1246,112 @@ function renderCards(){
   if (document.activeElement !== $("#overall")) { $("#overall").value = S.session.overall || ""; grow($("#overall")); }
   updateTotal();
 }
+/* 면접위원 색상: 사용자가 고르지 않는다. 기본 팔레트를 순서대로 배정한다.
+   순서 = 스터디 응시자면 그룹원 순서(어느 세션에서나 같은 사람은 같은 색), 아니면 세션 면접위원 순서. 작성자 기록이 없는 옛 카드는 무색. */
+const PAL = ["#2563EB","#D97706","#059669","#DB2777","#7C3AED","#0D9488"];
+function ivOrder(){
+  const c = cand(), g = c && c.groupId && DB.groups.find(x => x.id === c.groupId);
+  return [...new Set([...(g ? g.members.map(m => m.email) : []), ...S.session.interviewers, ...S.cards.map(x => x.by).filter(Boolean)])];
+}
+const colorOf = email => { if (!email) return ""; const i = ivOrder().indexOf(email); return i < 0 ? "" : PAL[i % PAL.length]; };
+// 범례: 면접위원별 질문 수 (색이 보일 때만)
+function legendHtml(){
+  const by = S.cards.map(c => c.by).filter(Boolean);
+  if (!(S.session.interviewers.length > 1 || new Set(by).size > 1)) return "";
+  const who = ivOrder().filter(e => S.session.interviewers.includes(e) || by.includes(e));
+  return `<span class="legend">${who.map(e => `<span><i style="background:${colorOf(e)}"></i>${esc(nameOf(e))} ${by.filter(x => x === e).length}</span>`).join("")}</span>`;
+}
 const othersHtml = c => Object.entries(c.notes || {}).filter(([e,v]) => e !== DB.me.email && v).map(([e,v]) => `<span><b>${esc(nameOf(e))}</b> ${esc(v)}</span>`).join("");
 // 총 시간 = 첫 질문을 시작한 때부터 [면접 종료]를 누를 때까지. 질문 타이머를 멈춰도 계속 흐른다.
 const inProgress = () => !!(S && S.session.startedAt && !S.session.endedAt);
 const total = () => {
   const st = S.session.startedAt; if (!st) return 0;
-  const end = S.session.endedAt ? Date.parse(S.session.endedAt) : Date.now();
+  const end = S.session.endedAt ? Date.parse(S.session.endedAt) : nowS();
   return Math.max(0, Math.round((end - Date.parse(st)) / 1000));
 };
-// 질문을 시작하면 총 시간이 시작된다 (종료 뒤 다시 시작하면 이어서 흐른다). 모든 카드 시간을 초기화하면 총 시간도 비운다.
-function markClock(){
-  if (active && !S.session.startedAt) S.session.startedAt = new Date().toISOString();
-  if (active && S.session.endedAt) S.session.endedAt = "";
-  if (!active && S.cards.every(c => !c.t)) { S.session.startedAt = ""; S.session.endedAt = ""; }
-  dirty = true;
+// 진행 중인 카드 시간 = 저장된 t + 서버 기준 시작 시각부터 지난 초 (누가 눌렀든 모든 화면이 같은 값)
+const liveT = c => c.t + (S && c.id === S.session.runCard && S.session.runSince ? Math.max(0, Math.floor((nowS() - S.session.runSince) / 1000)) : 0);
+// 진행 카드 전환은 서버(pe_run)가 한다. 멈춘 카드의 경과 초도 서버가 더한다. 화면은 먼저 바꿔 두고 응답으로 맞춘다.
+async function runTo(kid, fin){
+  const sid = S.session.id, prev = S.session.runCard, pc = S.cards.find(x => x.id === prev);
+  if (pc) pc.t = liveT(pc);
+  Object.assign(S.session, {runCard:kid || "", runSince:kid ? nowS() : 0, runBy:kid ? DB.me.email : ""});
+  if (kid && !S.session.startedAt) S.session.startedAt = new Date(nowS()).toISOString();
+  if (kid) S.session.endedAt = "";
+  if (fin) S.session.endedAt = new Date(nowS()).toISOString();
+  active = kid || null; renderCards();
+  try {
+    const r = must(await sb.rpc("pe_run", {sid, kid:kid || "", fin:!!fin}));
+    skew = Date.parse(r.now) - Date.now();
+    if (!S || S.session.id !== sid) return;
+    if (pc && r.prev_t != null) pc.t = r.prev_t;
+    applyRun(r); renderCards();
+  } catch(err){ toast("타이머를 맞추지 못했습니다: " + err.message); }
+}
+function applyRun(r){
+  Object.assign(S.session, {runCard:r.run_card || "", runSince:r.run_since ? Date.parse(r.run_since) : 0, runBy:r.run_by || "",
+    startedAt:r.started_at || "", endedAt:r.ended_at || ""});
+  active = S.session.runCard || null;
 }
 function updateTotal(){
   $("#total").textContent = fmt(total());
   $("#endBtn").hidden = !inProgress() || S.ro;
-  $("#meta").textContent = `질문 ${S.cards.length}개 · 답변 ${S.cards.filter(c => c.t > 0).length}개`;
+  $("#meta").innerHTML = `질문 ${S.cards.length}개 · 답변 ${S.cards.filter(c => liveT(c) > 0).length}개` + legendHtml();
 }
 const findCard = el => S.cards.find(x => x.id === el.closest("[data-id]")?.dataset.id);
-$("#cards").addEventListener("click", e => {
+// 모든 카드 시간을 비우면 총 시간도 비운다 (처음부터 다시)
+function clearClockIfEmpty(){
+  if (!S.session.runCard && S.cards.every(c => !c.t) && S.session.startedAt) { S.session.startedAt = ""; S.session.endedAt = ""; markSess("startedAt", "endedAt"); }
+}
+$("#cards").addEventListener("click", async e => {
   if (S.ro) return;
   const k = e.target.closest("[data-kind]");
-  if (k) { const c = findCard(k); c.kind = k.dataset.kind; c.q = INTRO[c.kind] || ""; dirty = true; renderCards();
+  if (k) { const c = findCard(k); c.kind = k.dataset.kind; c.q = INTRO[c.kind] || ""; markCard(c); renderCards();
     if (c.kind === "etc") document.querySelector(`[data-id="${c.id}"] [data-introetc]`)?.focus(); return; }
   const ut = e.target.closest("[data-untag]");
-  if (ut) { const c = findCard(ut); c.tags = c.tags.filter(t => t !== ut.dataset.untag); dirty = true; renderCards(); return; }
+  if (ut) { const c = findCard(ut); c.tags = c.tags.filter(t => t !== ut.dataset.untag); markCard(c); renderCards(); return; }
   const b = e.target.closest("[data-act]"); if (!b) return;
-  const c = findCard(b);
-  if (b.dataset.act === "toggle") active = active === c.id ? null : c.id;
-  if (b.dataset.act === "reset") { c.t = 0; if (active === c.id) active = null; dirty = true; }
+  const c = findCard(b), act = b.dataset.act;
+  if (act === "toggle") { await runTo(active === c.id ? "" : c.id); return; }
+  if (act === "edit") { editing = c.id; renderCards(); const i = document.querySelector(`[data-id="${c.id}"] [data-qedit]`); i?.focus(); i?.select(); return; }
+  // 시간을 손대는 동작은 그 카드가 돌고 있으면 먼저 멈춘다 (서버가 경과 초를 더한 뒤에 덮어쓴다)
+  if (act === "reset") { if (active === c.id) await runTo(""); c.t = 0; markCard(c, true); clearClockIfEmpty(); }
   // [▶]를 깜빡했을 때 답변 시간을 손으로 고친다. "2:30" = 2분 30초, 숫자 하나 = 분
-  if (b.dataset.act === "settime") {
-    if (active === c.id) active = null;
-    const v = prompt("답변 시간을 분:초로 입력하세요 (예: 2:30)", fmt(c.t));
+  if (act === "settime") {
+    const v = prompt("답변 시간을 분:초로 입력하세요 (예: 2:30)", fmt(liveT(c)));
     if (v === null) { renderCards(); return; }
     const p = v.match(/\d+/g);
     if (!p || p.length > 2) { toast("분:초 형식으로 입력하세요 (예: 2:30)"); return; }
     const sec = p.length === 2 ? +p[0] * 60 + +p[1] : +p[0] * 60;
     if (p.length === 2 && +p[1] > 59) { toast("초는 0~59로 입력하세요"); return; }
-    c.t = sec; dirty = true;
+    if (active === c.id) await runTo("");
+    c.t = sec; markCard(c, true);
   }
-  if (b.dataset.act === "edit") { editing = c.id; renderCards(); const i = document.querySelector(`[data-id="${c.id}"] [data-qedit]`); i?.focus(); i?.select(); return; }
-  if (b.dataset.act === "del") {
-    const used = c.t > 0 || c.myNote || Object.values(c.notes || {}).some(Boolean);
+  if (act === "del") {
+    const used = liveT(c) > 0 || c.myNote || Object.values(c.notes || {}).some(Boolean);
     if (used && !confirm("이 카드에는 측정 시간이나 기록이 있습니다. 카드를 삭제할까요?")) return;
-    S.cards = S.cards.filter(x => x !== c); if (active === c.id) active = null; if (editing === c.id) editing = null; dirty = true; }
-  if (["toggle","reset","del","settime"].includes(b.dataset.act)) markClock();
+    if (active === c.id) await runTo("");
+    S.cards = S.cards.filter(x => x !== c); if (editing === c.id) editing = null;
+    ["cards","t","notes"].forEach(k => PEND[k].delete(c.id)); PEND.del.add(c.id); dirty = true;
+    clearClockIfEmpty();
+  }
   renderCards(); updateTotal();
 });
 $("#cards").addEventListener("input", e => {
   const el = e.target, c = findCard(el); if (!c) return;
-  if (el.matches("[data-note]")) { c.myNote = el.value; grow(el); dirty = true; }
-  if (el.matches("[data-introetc]")) { c.q = el.value.trim(); dirty = true; }
+  if (el.matches("[data-note]")) { c.myNote = el.value; grow(el); markNote(c); }
+  if (el.matches("[data-introetc]")) { c.q = el.value.trim(); markCard(c); }
 });
 $("#cards").addEventListener("change", e => {
   if (!e.target.matches("[data-qedit]")) return;
   const c = findCard(e.target), v = e.target.value.trim();
-  if (v) c.q = v;             // 비우면 원래 질문 유지 (지우려면 X)
-  editing = null; dirty = true; renderCards();
+  if (v) { c.q = v; markCard(c); }   // 비우면 원래 질문 유지 (지우려면 X)
+  editing = null; renderCards();
 });
 // 태그: Enter·쉼표·스페이스로 넣고, 빈 칸에서 Backspace면 마지막 태그를 뺀다
 const addTags = (c, raw) => {
   const ts = raw.split(/[,\s]+/).map(t => t.replace(/^#+/, "").trim().slice(0, 30)).filter(Boolean);
-  c.tags = [...new Set([...(c.tags || []), ...ts])].slice(0, 10); if (ts.length) dirty = true;
+  c.tags = [...new Set([...(c.tags || []), ...ts])].slice(0, 10); if (ts.length) markCard(c);
 };
 $("#cards").addEventListener("keydown", e => {
   if (!e.target.matches("[data-tag]")) return;
@@ -1295,7 +1359,7 @@ $("#cards").addEventListener("keydown", e => {
   if ((e.key === "Enter" || e.key === "," || e.key === " ") && !e.isComposing) {
     e.preventDefault(); if (!el.value.trim()) return;
     addTags(c, el.value); renderCards(); document.querySelector(`[data-id="${c.id}"] [data-tag]`)?.focus();
-  } else if (e.key === "Backspace" && !el.value && c.tags?.length) { c.tags.pop(); dirty = true; renderCards(); document.querySelector(`[data-id="${c.id}"] [data-tag]`)?.focus(); }
+  } else if (e.key === "Backspace" && !el.value && c.tags?.length) { c.tags.pop(); markCard(c); renderCards(); document.querySelector(`[data-id="${c.id}"] [data-tag]`)?.focus(); }
 });
 $("#cards").addEventListener("focusout", e => {
   if (!e.target.matches("[data-tag]") || !e.target.value.trim()) return;
@@ -1306,14 +1370,14 @@ $("#cards").addEventListener("keydown", e => {
   if (e.key === "Enter") { e.preventDefault(); e.target.blur(); }
   if (e.key === "Escape" && editing) { editing = null; renderCards(); }
 });
-$("#endBtn").onclick = () => {
+// 면접 종료: 진행 카드 멈춤 + 종료 시각을 서버가 한 번에 (응시자 화면은 이때 질문지가 열린다)
+$("#endBtn").onclick = async () => {
   if (!inProgress()) return;
-  active = null; S.session.endedAt = new Date().toISOString(); dirty = true;
-  renderCards(); updateTotal(); flush(); toast(`면접을 종료했습니다 · 총 ${fmt(total())}`);
+  await runTo("", true); updateTotal(); toast(`면접을 종료했습니다 · 총 ${fmt(total())}`);
 };
-$("#overall").oninput = e => { S.session.overall = e.target.value; grow(e.target); dirty = true; };
+$("#overall").oninput = e => { S.session.overall = e.target.value; grow(e.target); markSess("overall"); };
 // 새 카드는 포부 카드 앞에 넣어 포부가 계속 마지막에 오게 한다
-const addCard = c => { const v = S.cards.findIndex(x => x.preset === "vision"); v < 0 ? S.cards.push(c) : S.cards.splice(v, 0, c); dirty = true; return c; };
+const addCard = c => { c.by = c.by || DB.me.email; const v = S.cards.findIndex(x => x.preset === "vision"); v < 0 ? S.cards.push(c) : S.cards.splice(v, 0, c); markCard(c); markOrder(); return c; };
 $("#addBtn").onclick = () => { const c = addCard({id:rid(), q:"", t:0, notes:{}, myNote:""}); renderCards(); document.querySelector(`[data-id="${c.id}"] [data-qedit]`)?.focus(); };
 
 /* 끌어서 순서 바꾸기 */
@@ -1333,18 +1397,61 @@ $("#cards").addEventListener("drop", e => { if (dragEl) e.preventDefault(); });
 $("#cards").addEventListener("dragend", () => {
   if (!dragEl) return; dragEl.classList.remove("dragging"); dragEl = null;
   const order = [...document.querySelectorAll("#cards article")].map(a => a.dataset.id);
-  S.cards.sort((a,b) => order.indexOf(a.id) - order.indexOf(b.id)); dirty = true;
+  S.cards.sort((a,b) => order.indexOf(a.id) - order.indexOf(b.id)); markOrder();
 });
 
-/* 타이머: 한 번에 한 카드만 */
+/* 타이머: 한 세션에 진행 카드 하나. 시간은 서버 시작 시각으로 계산해 표시만 한다 (저장은 pe_run이) */
 setInterval(() => {
-  if (inProgress() && active === null) updateTotal();
-  if (active === null || !S) return;
-  const c = S.cards.find(x => x.id === active); if (!c) { active = null; return; }
-  c.t++; dirty = true;
-  const el = document.querySelector(`[data-id="${c.id}"] [data-time]`); if (el) el.textContent = fmt(c.t);
-  updateTotal();
+  if (!S) return;
+  if (inProgress()) updateTotal();
+  if (active === null) return;
+  const c = S.cards.find(x => x.id === active); if (!c) return;
+  const el = document.querySelector(`[data-id="${c.id}"] [data-time]`); if (el) el.textContent = fmt(liveT(c));
 }, 1000);
+
+/* ---------- 실시간: 같은 세션을 연 사람끼리 카드·타이머·면접위원을 바로 맞춘다 ---------- */
+// 받는 쪽 원칙: 내가 고치고 아직 저장 안 한 것(PEND)과 지금 입력 중인 칸은 덮지 않는다. 입력 중이면 다 쓰고 나서 다시 그린다.
+let RT = null, needRender = false;
+function live(sid){
+  if (RT) { sb.removeChannel(RT); RT = null; }
+  RT = sb.channel("sess-" + sid)
+    .on("postgres_changes", {event:"UPDATE", schema:"public", table:"pe_sessions", filter:`id=eq.${sid}`}, onSessRow)
+    .on("postgres_changes", {event:"*", schema:"public", table:"pe_cards", filter:`session_id=eq.${sid}`}, onCardRow)
+    .on("postgres_changes", {event:"DELETE", schema:"public", table:"pe_cards"}, onCardRow)   // 삭제는 필터가 안 먹는다
+    .subscribe();
+}
+const typing = () => { const a = document.activeElement; return !!(a && a.closest && a.closest("#cards") && a.matches("input,textarea")) || !!dragEl; };
+function softRender(){ if (typing()) needRender = true; else renderCards(); }
+$("#cards").addEventListener("focusout", () => setTimeout(() => { if (needRender && !typing()) renderCards(); }));
+function onSessRow({new:r}){
+  if (!S || !r || r.id !== S.session.id) return;
+  // 응시자 화면: 면접이 끝나는 순간 질문지를 연다
+  if (S.sealed && r.ended_at) { openSession(S.session.id); return; }
+  applyRun(r);
+  const ps = PEND.sess, s = S.session;
+  if (!ps.has("interviewers")) s.interviewers = r.interviewers || [];
+  if (!ps.has("date") && r.date) s.date = r.date;
+  if (!ps.has("meet") && document.activeElement !== $("#meetIn")) s.meet = r.meet || "";
+  if (!S.ro && !ps.has("overall") && document.activeElement !== $("#overall")) { s.overall = r.overall || ""; }
+  const row = DB.sessions.find(x => x.id === s.id); if (row) { row.interviewers = s.interviewers; row.date = s.date; }
+  renderSessionBar(); softRender(); updateTotal();
+}
+function onCardRow(ev){
+  if (!S || S.sealed) return;
+  if (ev.eventType === "DELETE") {
+    const id = ev.old && ev.old.id; if (!id || !S.cards.some(c => c.id === id) || PEND.cards.has(id)) return;
+    S.cards = S.cards.filter(c => c.id !== id); if (active === id) active = null; softRender(); updateTotal(); return;
+  }
+  const r = ev.new; if (!r || r.session_id !== S.session.id || PEND.del.has(r.id)) return;
+  let c = S.cards.find(x => x.id === r.id);
+  if (!c) { c = {id:r.id, notes:{}, myNote:"", t:0}; S.cards.push(c); }
+  if (!PEND.cards.has(r.id) && editing !== r.id)
+    Object.assign(c, {q:r.q, preset:r.preset, kind:r.kind, src:r.src, followups:r.followups || [], ans:r.ans, tags:r.tags || []});
+  c.by = r.created_by || c.by || "";
+  if (!S.ro && !PEND.t.has(r.id)) c.t = r.t;
+  if (!PEND.order) { c.ord = r.ord; S.cards.sort((a,b) => (a.ord ?? 1e9) - (b.ord ?? 1e9)); }
+  softRender(); updateTotal();
+}
 
 /* ---------- 자동 저장 ---------- */
 async function flush(){
@@ -1352,14 +1459,26 @@ async function flush(){
   if (memoDirty && S && !S.ro) { memoDirty = false; call("setMemo", {id:S.session.id, memo:S.session.memo}, {quiet:true}).catch(() => { memoDirty = true; }); }
   if (S && S.ro) dirty = false;
   if (!dirty || !S) return;
-  saving = true; dirty = false; setSave("저장 중...");
+  saving = true; setSave("저장 중...");
   const sid = S.session.id;
+  // 대기 목록을 떼어 내고 비운다. 실패하면 되돌려 놓는다.
+  const P = {cards:new Set(PEND.cards), t:new Set(PEND.t), notes:new Set(PEND.notes), del:new Set(PEND.del), order:PEND.order, sess:new Set(PEND.sess)};
+  pendReset();
+  const p = {id:sid};
+  const SF = {date:"date", meet:"meet", overall:"overall", interviewers:"interviewers", startedAt:"startedAt", endedAt:"endedAt"};
+  P.sess.forEach(k => { p[SF[k]] = S.session[k] || (k === "interviewers" ? [] : ""); });
+  const ids = new Set([...P.cards, ...P.t, ...P.notes]);
+  p.cards = [...ids].map(id => S.cards.find(c => c.id === id)).filter(Boolean).map(c => {
+    const o = {id:c.id};
+    if (P.cards.has(c.id) || P.t.has(c.id)) Object.assign(o, {q:c.q || "", preset:c.preset || "", kind:c.kind || "", src:c.src || "", followups:c.followups || [], ans:c.ans || "", tags:c.tags || [], ord:c.ord ?? S.cards.indexOf(c)});
+    if (P.t.has(c.id)) o.t = c.t;
+    if (P.notes.has(c.id)) o.myNote = c.myNote || "";
+    return o;
+  });
+  if (P.del.size) p.del = [...P.del];
+  if (P.order) p.order = S.cards.map(c => c.id);
   try {
-    const r = await call("saveSession", {
-      id: sid, date: S.session.date, overall: S.session.overall, meet: S.session.meet, interviewers: S.session.interviewers,
-      startedAt: S.session.startedAt || "", endedAt: S.session.endedAt || "",
-      cards: S.cards.map(c => ({id:c.id, q:c.q, preset:c.preset, kind:c.kind, src:c.src, followups:c.followups, ans:c.ans, t:c.t, tags:c.tags || [], myNote:c.myNote})),
-    }, {quiet:true});
+    const r = await call("saveSession", p, {quiet:true});
     // 다른 면접위원 기록만 갱신 (내 입력과 구조는 건드리지 않는다)
     if (S && S.session.id === sid) r.cards.forEach(sc => {
       const c = S.cards.find(x => x.id === sc.id); if (!c) return;
@@ -1367,7 +1486,10 @@ async function flush(){
       const el = document.querySelector(`[data-id="${c.id}"] [data-others]`); if (el) el.innerHTML = othersHtml(c);
     });
     setSave("저장됨 " + new Date().toLocaleTimeString("ko-KR", {hour:"2-digit", minute:"2-digit"}));
-  } catch(e){ dirty = true; setSave("저장 실패 · 다시 시도 중", true); }
+  } catch(e){
+    if (S && S.session.id === sid) { ["cards","t","notes","del","sess"].forEach(k => P[k].forEach(x => PEND[k].add(x))); PEND.order = PEND.order || P.order; dirty = true; }
+    setSave("저장 실패 · 다시 시도 중", true);
+  }
   saving = false;
 }
 const setSave = (t, err) => { const el = $("#saveState"); el.textContent = t; el.classList.toggle("err", !!err); };
