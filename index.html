@@ -227,7 +227,8 @@ dialog.report{width:min(1060px,calc(100% - 32px))}
 .inv .chip button{border:0;background:none;color:var(--muted);cursor:pointer;padding:0 0 0 4px}
 .invBox{display:flex;flex-direction:column;gap:6px}
 .tree .locked{font-size:12px;color:var(--muted);padding:4px 8px 6px 22px}
-.tree .nolook{opacity:.4}
+.tree .nolook{opacity:.45}
+.tree .noeye svg{width:13px;height:13px;vertical-align:-2px;margin-right:4px}
 .leaf .soon{margin-left:6px;font-size:11px;color:var(--accent)}
 .toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--paper);padding:8px 16px;border-radius:var(--r);font-size:13px;z-index:40}
 @media (prefers-reduced-motion:reduce){.side,.tree details>summary::before{transition:none}}
@@ -481,6 +482,7 @@ const ICON = {
   reset:'<svg viewBox="0 0 16 16"><path d="M8 2.5a5.5 5.5 0 1 1-5.2 3.7l1.4.5A4 4 0 1 0 8 4v2L4.5 3.25 8 .5z"/></svg>',
   edit:'<svg viewBox="0 0 16 16"><path d="M11.3 1.9l2.8 2.8-8.4 8.4-3.4.6.6-3.4zM10.2 3l2.8 2.8" stroke="currentColor" stroke-width="1.3" fill="none"/></svg>',
   del:'<svg viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" fill="none"/></svg>',
+  noeye:'<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8s-2.4 4.5-6.5 4.5S1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/><path d="M2.5 13.5l11-11"/></svg>',
 };
 
 const $ = s => document.querySelector(s);
@@ -687,7 +689,6 @@ async function boot(){
 }
 
 /* ---------- 사이드바 ---------- */
-const maskName = n => { const a = [...String(n || "")]; return a.length ? a[0] + "○".repeat(Math.max(a.length - 1, 1)) : "○○"; };
 const sKey = s => String(s.date) + (s.time || "");
 const sWhen = s => md(s.date) + (s.time ? " " + s.time : "");
 const ivNames = s => s.planIv ? s.planIv : [...new Set(s.interviewers.map(nameOf))].join(", ");
@@ -716,8 +717,8 @@ function renderTree(){
       <button class="leaf add" data-new="${c.id}">+ 새 세션</button>
       <button class="leaf add" data-edit="${c.id}">정보 수정·삭제</button></details>`;
   };
-  // 열람 권한 없는 응시자는 이름을 가리고(첫 글자만) 흐리게 표시
-  const lockedHtml = d => `<details class="nolook"><summary>${esc(maskName(d.name))}<span class="sub">초대 필요</span></summary>
+  // 열람 권한 없는 응시자: 이름은 그대로(중복 등록 방지), 흐리게 + 눈 가림 아이콘
+  const lockedHtml = d => `<details class="nolook"><summary><span class="noeye" title="열람 권한 없음" aria-label="열람 권한 없음">${ICON.noeye}</span>${esc(d.name)}<span class="sub">초대 필요</span></summary>
       <div class="locked">${esc(String(d.field).replace("기술사",""))}${d.round?` · ${esc(d.round)}회`:""}<br>열람하시려면 관리자나 이 응시자의 면접위원에게 초대를 요청하세요</div></details>`;
   const locked = DB.dir.filter(d => !mine.has(d.id));
   const groups = [...new Set([...DB.cands, ...locked].map(x => x.grp || ""))].sort((a,b) => (a === "") - (b === "") || a.localeCompare(b, "ko"));
