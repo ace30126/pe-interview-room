@@ -272,6 +272,11 @@ dialog.small{width:min(460px,calc(100% - 32px))}
 .invRow #cInvName{flex:0 1 8em}
 .invRow #cInvIn{flex:1 1 14em}
 .fu{grid-column:2/-1;font-size:12px;color:var(--muted);margin:0;padding-left:16px}
+.stinfo{margin:0 16px 4px;padding:10px 12px 10px 28px;border-radius:6px;background:var(--accent-soft);font-size:12.5px;line-height:1.6;color:var(--ink)}
+.stinfo b{color:var(--accent);font-weight:600}
+#snDlg{width:min(520px,calc(100% - 32px))}
+#snDlg .invRow{flex-wrap:nowrap}
+#snMName{flex:0 0 6.5em;min-width:0} #snEmail{flex:1 1 auto;min-width:0}
 .form2{display:grid;grid-template-columns:auto 1fr;gap:10px 12px;align-items:center;padding:16px}
 .form2 label{color:var(--muted);font-size:13px}
 .form2 .pchk{display:flex;gap:8px;align-items:flex-start;line-height:1.5}
@@ -443,6 +448,27 @@ textarea.paste{width:100%;min-height:150px;font-family:var(--font-num);font-size
     <div class="ivlist" id="iList"></div>
   </div>
 </dialog>
+
+<dialog id="snDlg" class="small">
+  <form class="dlg" id="snForm">
+    <header><h2>스터디 만들기</h2><button type="button" class="btn ghost x" data-close>닫기</button></header>
+    <div class="form2">
+      <label for="snName">스터디 이름</label><input type="text" id="snName" maxlength="40" required placeholder="예: 140회 화요 스터디">
+      <label for="snEmail" style="align-self:start;padding-top:4px">그룹원</label>
+      <div class="invBox"><div class="inv" id="snInv"></div>
+        <div class="invRow"><input type="text" id="snMName" placeholder="이름" aria-label="초대할 그룹원 이름">
+        <input type="text" id="snEmail" list="snMemList" placeholder="Google 이메일, Enter로 추가" aria-label="초대할 그룹원 이메일"></div>
+        <span class="muted" style="font-size:12px">나중에 [그룹원 관리]에서 더 초대할 수 있습니다</span></div>
+    </div>
+    <ul class="stinfo">
+      <li><b>비공개</b> · 스터디 응시자는 그룹원에게만 보이고 공용 목록에 뜨지 않습니다</li>
+      <li><b>서로 봐주기</b> · 그룹원은 누구의 세션이든 질문을 넣고 기록합니다</li>
+      <li><b>질문지 보호</b> · 응시자 본인에게는 면접이 끝난 뒤에 질문지가 열립니다</li>
+    </ul>
+    <footer><button type="button" class="btn" data-close>취소</button><button type="submit" class="btn primary">만들기</button></footer>
+  </form>
+</dialog>
+<datalist id="snMemList"></datalist>
 
 <dialog id="stDlg" class="small">
   <div class="dlg">
@@ -828,7 +854,7 @@ $("#tree").onclick = async e => {
   else if (e.target.id === "newQuick") startQuick(e.target);
   else if (e.target.closest("[data-st-new]")) openCandDlg(null, e.target.closest("[data-st-new]").dataset.stNew);
   else if (e.target.closest("[data-st]")) openStudy(e.target.closest("[data-st]").dataset.st);
-  else if (e.target.id === "newStudy") newStudy(e.target);
+  else if (e.target.id === "newStudy") newStudy();
 };
 // 즉석 면접: 숨은 개인 응시자 + 오늘 세션을 한 번에 만들고 바로 연다. 정식 응시자로 바꾸려면 정보 수정.
 function startQuick(btn){
@@ -1089,14 +1115,51 @@ $("#cForm").onsubmit = e => {
 
 /* ---------- 스터디 ---------- */
 let curStudy = null, stDelArmed = false;
-function newStudy(btn){
-  const n = (prompt("스터디 이름을 입력하세요 (예: 140회 화요 스터디)") || "").trim();
-  if (!n) return;
-  lockBtn(btn, async () => {
-    try { const r = await call("studyCreate", {name:n.slice(0, 40)}); DB = r.boot; renderTree(); openStudy(r.id); toast("스터디를 만들었습니다. 그룹원을 초대하세요"); }
-    catch(e){ toast("만들지 못했습니다: " + e.message); }
-  });
+// 스터디 만들기: 이름 + 처음 초대할 그룹원을 한 화면에서. 만들고 나면 그 스터디 폴더를 펼친다.
+let snList = [], snNames = {};
+function newStudy(){
+  snList = []; snNames = {};
+  $("#snName").value = ""; $("#snMName").value = ""; $("#snEmail").value = "";
+  $("#snMemList").innerHTML = DB.members.filter(m => m.email !== DB.me.email).map(m => `<option value="${esc(m.email)}">${esc(m.name)}</option>`).join("");
+  renderSnInv(); $("#snDlg").showModal(); $("#snName").focus();
 }
+function renderSnInv(){
+  $("#snInv").innerHTML = `<span class="chip">${esc(DB.me.name)} · 그룹장</span>` + snList.map(e => `<span class="chip">${esc(snNames[e] || nameOf(e))}<button type="button" data-snx="${esc(e)}" aria-label="${esc(e)} 빼기">×</button></span>`).join("");
+}
+// 이미 가입한 사람은 이메일만, 처음 초대하는 사람은 이름도 (응시자 초대와 같은 규칙). 빈 칸이면 통과.
+function takeSn(){
+  const e = $("#snEmail").value.trim().toLowerCase(), n = $("#snMName").value.trim();
+  if (!e) { if (n) { toast("이메일도 입력하세요"); $("#snEmail").focus(); return false; } return true; }
+  if (!EMAIL_RE.test(e)) { toast("이메일 형식이 아닙니다: " + e); $("#snEmail").focus(); return false; }
+  const known = DB.members.find(m => m.email === e && m.name && m.name !== e.split("@")[0]);
+  if (!known && !n) { toast("처음 초대하는 분은 이름을 입력하세요"); $("#snMName").focus(); return false; }
+  if (snList.length >= 11 && !snList.includes(e)) { toast("스터디는 12명까지입니다"); return false; }
+  if (e !== DB.me.email && !snList.includes(e)) snList.push(e);
+  snNames[e] = n || (known && known.name) || "";
+  $("#snEmail").value = ""; $("#snMName").value = ""; renderSnInv(); $("#snMName").focus();
+  return true;
+}
+["snMName","snEmail"].forEach(id => $("#"+id).addEventListener("keydown", e => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); takeSn(); } }));
+$("#snEmail").addEventListener("change", () => { const m = DB.members.find(x => x.email === $("#snEmail").value.trim().toLowerCase()); if (m && !$("#snMName").value) $("#snMName").value = m.name; });
+$("#snInv").onclick = e => { const b = e.target.closest("[data-snx]"); if (b) { snList = snList.filter(x => x !== b.dataset.snx); renderSnInv(); } };
+$("#snForm").onsubmit = e => {
+  e.preventDefault();
+  const n = $("#snName").value.trim(); if (!n) return $("#snName").focus();
+  if (!takeSn()) return;
+  lockBtn($("#snForm [type=submit]"), async () => {
+    let id = null;
+    try {
+      id = (await call("studyCreate", {name:n.slice(0, 40)})).id;
+      if (snList.length) await call("studyAdd", {id, emails:snList, names:snList.map(x => snNames[x] || "")});
+      DB = await call("boot"); TREE_OPEN["st:" + id] = true; renderTree(); $("#snDlg").close();
+      toast(snList.length ? `스터디를 만들고 ${snList.length}명을 초대했습니다` : "스터디를 만들었습니다. [그룹원 관리]에서 초대하세요");
+    } catch(err){
+      // 스터디는 만들어졌는데 초대만 실패한 경우: 관리 화면으로 넘겨 다시 초대하게 한다
+      if (id) { DB = await call("boot"); renderTree(); $("#snDlg").close(); openStudy(id); toast("스터디는 만들었지만 초대하지 못했습니다: " + err.message); }
+      else toast("만들지 못했습니다: " + err.message);
+    }
+  });
+};
 function openStudy(id){
   curStudy = id; stDelArmed = false; $("#stDel").textContent = "스터디 삭제";
   $("#stName").value = ""; $("#stEmail").value = "";
