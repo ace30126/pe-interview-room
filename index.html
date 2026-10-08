@@ -526,7 +526,7 @@ const API = {
   async boot(){
     const [mem, cands, sess, dir] = (await Promise.all([
       sb.from("pe_members").select("email,name,role,active"),
-      sb.from("pe_candidates").select("id,name,field,round,email,memo,img_path,created_by,invited,grp,personal").order("created_at"),
+      sb.from("pe_candidates").select("id,name,field,round,email,memo,img_path,created_by,invited,grp,personal,quick").order("created_at"),
       sb.from("pe_sessions").select("id,cand_id,date,time,interviewers,plan_iv"),
       sb.rpc("pe_cand_dir_g"),
     ])).map(must);
@@ -536,7 +536,7 @@ const API = {
       me: {email:ME, name:me.name || ME.split("@")[0], admin:me.role === "admin"},
       admins: mem.filter(m => m.active && m.role === "admin").map(m => m.email),
       members: mem.filter(m => m.active).map(m => ({email:m.email, name:m.name || m.email.split("@")[0]})),
-      cands: cands.map(c => ({id:c.id, name:c.name, field:c.field, round:c.round, email:c.email, memo:c.memo, hasImg:!!c.img_path, imgPath:c.img_path, createdBy:c.created_by, invited:c.invited || [], grp:c.grp || "", personal:!!c.personal})),
+      cands: cands.map(c => ({id:c.id, name:c.name, field:c.field, round:c.round, email:c.email, memo:c.memo, hasImg:!!c.img_path, imgPath:c.img_path, createdBy:c.created_by, invited:c.invited || [], grp:c.grp || "", personal:!!c.personal, quick:!!c.quick})),
       dir: dir.map(d => ({id:d.id, name:d.name, field:d.field, round:d.round, createdBy:d.created_by, invited:d.invited || [], grp:d.grp || ""})),
       sessions: sess.map(s => ({id:s.id, candId:s.cand_id, date:s.date, time:s.time || "", interviewers:s.interviewers, planIv:s.plan_iv || ""})),
     };
@@ -585,10 +585,10 @@ const API = {
     const isNew = !DB || !DB.cands.some(c => c.id === x.id);
     if (isNew) {
       must(await sb.from("pe_candidates").upsert({id:x.id, name:x.name, field:x.field || "", round:x.round || "",
-        email:(x.email || "").trim().toLowerCase(), invited:x.invited || [], created_by:ME, grp:x.grp || "", personal:!!x.personal}, {onConflict:"id", ignoreDuplicates:true}));
+        email:(x.email || "").trim().toLowerCase(), invited:x.invited || [], created_by:ME, grp:x.grp || "", personal:!!x.personal, quick:!!x.quick}, {onConflict:"id", ignoreDuplicates:true}));
     } else {
       const patch = {};
-      ["name","field","round","email","memo","invited","grp","personal"].forEach(k => { if (k in x) patch[k] = k === "email" ? String(x[k]).trim().toLowerCase() : x[k]; });
+      ["name","field","round","email","memo","invited","grp","personal","quick"].forEach(k => { if (k in x) patch[k] = k === "email" ? String(x[k]).trim().toLowerCase() : x[k]; });
       must(await sb.from("pe_candidates").update(patch).eq("id", x.id));
     }
     return withBoot ? {id:x.id, boot:await API.boot()} : x.id;
@@ -708,7 +708,9 @@ function renderTree(){
   const isOpen = (k, def) => TREE_OPEN[k] === undefined ? def : TREE_OPEN[k];
   const leaf = (s, who) => `<button class="leaf ${String(s.date) < today() ? "past" : ""}" data-s="${s.id}" ${s.id===cur?'aria-current="true"':""}><span class="dot"></span>${sWhen(s)}${canWrite(s) ? "" : `<span class="ro">열람</span>`}<span class="who">${esc(who)}</span></button>`;
   // 내가 면접위원인 세션: 날짜순
-  const myS = DB.sessions.filter(s => s.interviewers.includes(DB.me.email)).sort((a,b) => sKey(a).localeCompare(sKey(b)));
+  // 내 즉석 면접은 "즉석 면접" 폴더에만 둔다 (내 면접 일정에는 안 섞는다)
+  const myQuick = DB.cands.filter(c => c.quick && c.createdBy === DB.me.email), quickIds = new Set(myQuick.map(c => c.id));
+  const myS = DB.sessions.filter(s => s.interviewers.includes(DB.me.email) && !quickIds.has(s.candId)).sort((a,b) => sKey(a).localeCompare(sKey(b)));
   const left = myS.filter(s => String(s.date) >= today()).length;
   const candName = id => (DB.cands.find(c => c.id === id) || {}).name || "";
   const mineHtml = myS.length ? `<details class="grp" data-k="mine" ${isOpen("mine", true) ? "open" : ""}><summary>내 면접 일정<span class="sub">${left}건 남음</span></summary><div class="gin">${myS.map(s => leaf(s, candName(s.candId))).join("")}</div></details>` : "";
@@ -727,10 +729,19 @@ function renderTree(){
       <div class="locked">${esc(String(d.field).replace("기술사",""))}${d.round?` · ${esc(d.round)}회`:""}<br>열람하시려면 관리자나 이 응시자의 면접위원에게 초대를 요청하세요</div></details>`;
   const locked = DB.dir.filter(d => !mine.has(d.id));
   // 개인 응시자는 그룹 폴더 대신 "개인 응시자" 폴더 하나에 모은다 (공용 목록에는 안 뜬다)
-  const pers = DB.cands.filter(c => c.personal), shared = DB.cands.filter(c => !c.personal);
+  const pers = DB.cands.filter(c => c.personal && !quickIds.has(c.id)), shared = DB.cands.filter(c => !c.personal);
   const persHtml = pers.length ? `<details class="grp" data-k="personal" ${isOpen("personal", true) ? "open" : ""}><summary>개인 응시자<span class="sub">${pers.length}명 · 비공개</span></summary><div class="gin">${pers.map(candHtml).join("")}</div></details>` : "";
+  // 즉석 면접: 마지막 세션이 30일 지난 것은 아래 "30일 지난 즉석 면접"에 접어 둔다 (지우지 않는다)
+  const lastDate = c => DB.sessions.filter(s => s.candId === c.id).map(s => String(s.date)).sort().pop() || "";
+  const cut = (d => { d.setDate(d.getDate() - 30); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; })(new Date());
+  const byRecent = (a,b) => lastDate(b).localeCompare(lastDate(a));
+  const qNew = myQuick.filter(c => lastDate(c) >= cut).sort(byRecent), qOld = myQuick.filter(c => lastDate(c) < cut).sort(byRecent);
+  const quickHtml = `<details class="grp" data-k="quick" ${isOpen("quick", true) ? "open" : ""}><summary>즉석 면접<span class="sub">${myQuick.length ? myQuick.length + "건 · 비공개" : "응시자 등록 없이"}</span></summary><div class="gin">`
+    + `<button class="leaf add" id="newQuick">+ 즉석 면접 시작</button>${qNew.map(candHtml).join("")}`
+    + (qOld.length ? `<details class="grp" data-k="quickOld" ${isOpen("quickOld", false) ? "open" : ""}><summary>30일 지난 즉석 면접<span class="sub">${qOld.length}건</span></summary><div class="gin">${qOld.map(candHtml).join("")}</div></details>` : "")
+    + `</div></details>`;
   const groups = [...new Set([...shared, ...locked].map(x => x.grp || ""))].sort((a,b) => (a === "") - (b === "") || a.localeCompare(b, "ko"));
-  $("#tree").innerHTML = mineHtml + persHtml + groups.map(g => {
+  $("#tree").innerHTML = mineHtml + quickHtml + persHtml + groups.map(g => {
     const k = "g:" + g;
     const cs = shared.filter(c => (c.grp || "") === g), ls = locked.filter(d => (d.grp || "") === g);
     return `<details class="grp" data-k="${esc(k)}" ${isOpen(k, true) ? "open" : ""}><summary>${esc(g || "미분류")}<span class="sub">${cs.length + ls.length}명</span></summary>
@@ -744,7 +755,26 @@ $("#tree").onclick = async e => {
   else if (n) openSessDlg(n.dataset.new);
   else if (e.target.closest("[data-edit]")) openCandDlg(DB.cands.find(c => c.id === e.target.closest("[data-edit]").dataset.edit));
   else if (e.target.id === "newCand") openCandDlg(null);
+  else if (e.target.id === "newQuick") startQuick(e.target);
 };
+// 즉석 면접: 숨은 개인 응시자 + 오늘 세션을 한 번에 만들고 바로 연다. 정식 응시자로 바꾸려면 정보 수정.
+function startQuick(btn){
+  lockBtn(btn, async () => {
+    await flush();
+    const d = new Date(), hm = `${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
+    const x = {id:"c"+rid(), name:`즉석 ${md(today())} ${hm}`, field:"정보관리기술사", round:"", email:"", grp:"", invited:[], personal:true, quick:true};
+    try {
+      await call("saveCand", {cand:x});
+      const r = await call("newSession", {candId:x.id, id:"s"+rid(), date:today(), cards:[
+        {id:rid(), q:INTRO.career, preset:"intro", kind:"career", t:0},
+        {id:rid(), q:VISION_Q, preset:"vision", t:0},
+      ]});
+      DB = r.boot; TREE_OPEN["c:" + x.id] = true;
+      await openSession(r.id); $("#app").classList.remove("open");
+      toast("즉석 면접을 열었습니다. 나만 봅니다. 정식 응시자로 바꾸려면 [정보 수정]");
+    } catch(err){ toast("즉석 면접을 만들지 못했습니다: " + err.message); }
+  });
+}
 const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; };
 // 새 세션: id를 대화상자를 열 때 정해 두고, 재시도해도 같은 id로 보낸다 (서버가 중복 생성을 막는다)
 let newSess = null;
@@ -792,7 +822,8 @@ async function openSession(id){
 function renderCand(){
   const c = cand(), s = S.session;
   $("#crumb").innerHTML = `${esc(c.name)} › <b>${sWhen(s)} 모의면접</b>`;
-  $("#candChip").textContent = `${String(c.field).replace("기술사","")}${c.round?` · ${c.round}회`:""}`;
+  $("#candChip").textContent = c.quick ? "즉석 면접 · 나만 봄" : `${String(c.field).replace("기술사","")}${c.round?` · ${c.round}회`:""}`;
+  $("#editCand").textContent = c.quick ? "정식 응시자로 전환" : "정보 수정";
   const v = curVer(), vs = VERS[c.id];
   const img = pendingImg || (v && imgCache[v.path]);
   const has = hasPhoto();
@@ -908,13 +939,14 @@ function takeInv(){
 function openCandDlg(c){
   editingCand = c;
   newCandId = c ? null : "c"+rid();
-  $("#cTitle").textContent = c ? "응시자 정보 수정" : "응시자 추가";
-  $("#cName").value = c ? c.name : ""; $("#cField").value = c ? (c.field || "정보관리기술사") : "정보관리기술사";
+  // 즉석 면접을 열면 "정식 응시자로 전환" 대화상자가 된다. 저장하면 quick이 풀린다.
+  $("#cTitle").textContent = c && c.quick ? "정식 응시자로 전환" : c ? "응시자 정보 수정" : "응시자 추가";
+  $("#cName").value = c ? (c.quick && c.name.startsWith("즉석 ") ? "" : c.name) : ""; $("#cField").value = c ? (c.field || "정보관리기술사") : "정보관리기술사";
   $("#cRound").value = c ? c.round : ""; $("#cEmail").value = c ? (c.email || "") : "";
   const grps = [...new Set([...DB.cands, ...DB.dir].map(x => x.grp).filter(Boolean))].sort((a,b) => a.localeCompare(b, "ko"));
   $("#grpList").innerHTML = grps.map(g => `<option value="${esc(g)}">`).join("");
   $("#cGrp").value = c ? (c.grp || "") : ((cand() && cand().grp) || (grps.length === 1 ? grps[0] : ""));
-  $("#cPersonal").checked = c ? !!c.personal : false;
+  $("#cPersonal").checked = c && !c.quick ? !!c.personal : false;
   $("#cPersonal").disabled = !!c && !(DB.me.admin || c.createdBy === DB.me.email);
   invList = c ? [...c.invited] : []; invNames = {}; $("#cInvIn").value = ""; $("#cInvName").value = ""; renderInv();
   $("#cDel").hidden = !c || !(DB.me.admin || c.createdBy === DB.me.email);
@@ -943,13 +975,15 @@ $("#cForm").onsubmit = e => {
   const x = {name:$("#cName").value.trim(), field:$("#cField").value, round:$("#cRound").value.trim(), email:$("#cEmail").value.trim(), grp:$("#cGrp").value.trim()};
   if (!$("#cPersonal").disabled) x.personal = $("#cPersonal").checked;
   x.id = editingCand ? editingCand.id : newCandId;
+  const converting = !!(editingCand && editingCand.quick);
+  if (converting) x.quick = false;
   if (!takeInv()) return;
   x.invited = [...invList]; x.invNames = {...invNames};
   lockBtn($("#cForm [type=submit]"), async () => {
     try {
       const r = await call("saveCand", {cand:x, withBoot:true}); $("#cDlg").close();
       DB = r.boot; renderTree(); if (S) renderCand();
-      toast(editingCand ? "응시자 정보를 저장했습니다" : "응시자를 추가했습니다. 이름 아래 + 새 세션으로 면접을 시작하세요.");
+      toast(converting ? `정식 응시자로 바꿨습니다${x.personal ? " (개인 응시자)" : ""}` : editingCand ? "응시자 정보를 저장했습니다" : "응시자를 추가했습니다. 이름 아래 + 새 세션으로 면접을 시작하세요.");
     } catch(err){ toast("저장하지 못했습니다: "+err.message); }
   });
 };
@@ -1507,7 +1541,7 @@ function renderAcl(){
   if (mode === "cand") {
     const grps = [...new Set(DB.cands.map(c => c.grp || ""))].sort((a,b) => (a === "") - (b === "") || ko(a, b));
     const kw = AD.aclKw.toLowerCase();
-    const list = DB.cands.filter(c => (AD.aclGrp === "" || (c.grp || "") === (AD.aclGrp === "-" ? "" : AD.aclGrp)) && (!kw || c.name.toLowerCase().includes(kw)))
+    const list = DB.cands.filter(c => !c.quick && (AD.aclGrp === "" || (c.grp || "") === (AD.aclGrp === "-" ? "" : AD.aclGrp)) && (!kw || c.name.toLowerCase().includes(kw)))
       .sort((a,b) => ko(a.grp || "~", b.grp || "~") || ko(a.name, b.name));
     $("#adminBody").innerHTML = head + `<div class="arow"><input type="search" id="aclKw" placeholder="응시자 이름 검색" value="${esc(AD.aclKw)}" aria-label="응시자 검색">
         <select id="aclGrp" aria-label="그룹"><option value="">전체 그룹</option>${grps.map(g => `<option value="${esc(g || "-")}" ${AD.aclGrp === (g || "-") ? "selected" : ""}>${esc(g || "미분류")}</option>`).join("")}</select>
@@ -1537,7 +1571,7 @@ function renderAcl(){
       n && `<span class="why">면접위원 ${n}회</span>`, c.email === em && `<span class="why">응시자 본인</span>`].filter(Boolean);
     return {c, why};
   }).filter(r => r.why.length).sort((a,b) => ko(a.c.grp || "~", b.c.grp || "~") || ko(a.c.name, b.c.name));
-  const rest = DB.cands.filter(c => !rows.some(r => r.c.id === c.id)).sort((a,b) => ko(a.name, b.name));
+  const rest = DB.cands.filter(c => !c.quick && !rows.some(r => r.c.id === c.id)).sort((a,b) => ko(a.name, b.name));
   $("#adminBody").innerHTML = head + `<div class="arow"><select id="awWho" aria-label="사람">${mems.map(m => `<option value="${esc(m.email)}" ${m.email === em ? "selected" : ""}>${esc(m.name)} · ${esc(m.email)}</option>`).join("")}</select>
       <span class="muted" style="font-size:12px">${isAdm ? "관리자라 모든 응시자를 봅니다" : `응시자 ${rows.length}명 열람 가능`}</span></div>
     ${isAdm ? "" : `<div class="arow"><select id="awCand" aria-label="열람 권한을 줄 응시자"><option value="">응시자 선택</option>${rest.map(c => `<option value="${esc(c.id)}">${esc(c.name)}${c.grp ? ` (${esc(c.grp)})` : ""}</option>`).join("")}</select><button class="btn sm" data-a="grant">초대로 열람 권한 주기</button></div>`}</div>
