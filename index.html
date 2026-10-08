@@ -362,7 +362,7 @@ textarea.paste{width:100%;min-height:150px;font-family:var(--font-num);font-size
           <span class="muted" style="font-size:12px" id="photoHint"></span>
           <span id="verInfo"></span>
         </div>
-        <div class="summary"><label class="label" for="sumText">요약 메모 · 면접위원이 직접 작성</label><textarea id="sumText" placeholder="이력카드에서 질문할 포인트, 지난 세션에서 본 약점 등"></textarea></div>
+        <div class="summary"><label class="label" for="sumText">요약 메모 · 이 세션 면접위원이 작성</label><textarea id="sumText" placeholder="이력카드에서 질문할 포인트, 지난 세션에서 본 약점 등"></textarea></div>
       </aside>
 
       <section class="qpane">
@@ -570,6 +570,11 @@ const API = {
     must(await sb.from("pe_candidates").update({img_path:vers.length ? vers[vers.length-1].path : ""}).eq("id", id));
     return vers;
   },
+  // 이력카드 요약 메모는 세션마다 따로 둔다 (면접위원마다 보는 포인트가 다르다)
+  async setMemo({id, memo}){
+    must(await sb.from("pe_sessions").update({memo}).eq("id", id));
+    return true;
+  },
   async setTime({id, time}){
     must(await sb.from("pe_sessions").update({time}).eq("id", id));
     return true;
@@ -616,7 +621,7 @@ const API = {
     ])).map(must);
     const notes = await notesOf(cards.map(c => c.id));
     return {
-      session: {id:s.id, candId:s.cand_id, date:s.date, time:s.time || "", planIv:s.plan_iv || "", interviewers:s.interviewers, meet:s.meet, overall:s.overall, createdBy:s.created_by, startedAt:s.started_at || "", endedAt:s.ended_at || ""},
+      session: {id:s.id, candId:s.cand_id, date:s.date, time:s.time || "", planIv:s.plan_iv || "", interviewers:s.interviewers, meet:s.meet, overall:s.overall, memo:s.memo || "", createdBy:s.created_by, startedAt:s.started_at || "", endedAt:s.ended_at || ""},
       cards: cards.map(c => ({id:c.id, q:c.q, preset:c.preset, kind:c.kind, src:c.src, followups:c.followups || [], ans:c.ans, t:c.t, tags:c.tags || [], notes:notes[c.id] || {}})),
     };
   },
@@ -807,9 +812,9 @@ async function openSession(id){
   $("#adminView").hidden = true;
   S.ro = !canWrite(S.session);
   // 읽기 전용이면 답변 기록·총평·질문별 시간은 화면에 들고 있지도 않는다
-  if (S.ro) { S.session.overall = ""; S.cards.forEach(c => { c.notes = {}; c.t = 0; }); }
+  if (S.ro) { S.session.overall = ""; S.session.memo = ""; S.cards.forEach(c => { c.notes = {}; c.t = 0; }); }
   $("#room").classList.toggle("ro", S.ro); $("#roBar").hidden = !S.ro;
-  ["#dateIn","#timeIn","#meetIn","#overall"].forEach(q => $(q).disabled = S.ro);
+  ["#dateIn","#timeIn","#meetIn","#overall","#sumText"].forEach(q => $(q).disabled = S.ro);
   $("#delSess").hidden = S.ro;
   S.cards.forEach(c => c.myNote = c.notes[DB.me.email] || "");
   cur = id; store.set("pe_last", id);
@@ -837,7 +842,7 @@ function renderCand(){
   $("#photoPick").hidden = has && !replacing && !pendingImg;
   $("#photoHint").textContent = replacing ? "새 사진을 끌어다 놓거나 Ctrl+V, 또는 파일 선택 · 저장하면 이 세션 날짜부터 새 기준" : has ? "클릭하면 확대 · 바꾸려면 교체" : "끌어다 놓기 · Ctrl+V 붙여넣기";
   $("#verInfo").textContent = v && vs && vs.length > 1 ? `사진 ${vs.indexOf(v) + 1}/${vs.length}판${v.since > "2001" ? ` · ${md(v.since)}부터 기준` : " · 최초 등록본"}` : "";
-  if (document.activeElement !== $("#sumText")) { $("#sumText").value = c.memo || ""; grow($("#sumText")); }
+  if (document.activeElement !== $("#sumText")) { $("#sumText").value = S.session.memo || ""; grow($("#sumText")); }
 }
 // 세션 날짜에 맞는 기준본: 그 날짜 이전(포함) 중 최신. 그보다 이른 세션이면 가장 처음 사진.
 function verFor(candId, date){
@@ -913,7 +918,7 @@ $("#photoSlot").onclick = e => {
   const p = e.target.closest("[data-zoom]"); if (!p) return;
   const z = document.createElement("div"); z.className = "zoombox"; z.innerHTML = p.innerHTML; z.onclick = () => z.remove(); document.body.appendChild(z);
 };
-$("#sumText").oninput = e => { cand().memo = e.target.value; memoDirty = true; grow(e.target); };
+$("#sumText").oninput = e => { S.session.memo = e.target.value; memoDirty = true; grow(e.target); };
 
 /* 응시자 추가·수정 */
 let editingCand = null, newCandId = null, invList = [], invNames = {};
@@ -1211,7 +1216,7 @@ setInterval(() => {
 /* ---------- 자동 저장 ---------- */
 async function flush(){
   if (saving) return;
-  if (memoDirty && cand()) { memoDirty = false; call("saveCand", {cand:{id:cand().id, memo:cand().memo}}, {quiet:true}).catch(() => { memoDirty = true; }); }
+  if (memoDirty && S && !S.ro) { memoDirty = false; call("setMemo", {id:S.session.id, memo:S.session.memo}, {quiet:true}).catch(() => { memoDirty = true; }); }
   if (S && S.ro) dirty = false;
   if (!dirty || !S) return;
   saving = true; dirty = false; setSave("저장 중...");
@@ -1300,7 +1305,7 @@ function renderReport(){
     <div class="col"><h3>모의면접 결과 · ${esc(c.name)}</h3>
       <div class="meta">${s.date} · ${esc(c.field)}${c.round?` ${esc(c.round)}회`:""} · 면접위원 ${ivs.map(e => esc(nameOf(e))).join(", ")}</div>
       <div class="kpi"><div>총 시간<b>${fmt(total())}</b></div><div>질문<b>${S.cards.length}개</b></div></div>
-      ${c.memo?`<h3>이력카드 요약 메모</h3><div class="box">${esc(c.memo)}</div>`:""}
+      ${s.memo?`<h3>이력카드 요약 메모</h3><div class="box">${esc(s.memo)}</div>`:""}
       <h3>총평</h3><div class="box">${esc(s.overall || "(총평 미입력)")}</div>
       ${items.length?`<h3>질문별 피드백</h3>`:""}
     </div><span class="pg"></span></div></div>`;
