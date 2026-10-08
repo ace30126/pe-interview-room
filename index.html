@@ -270,6 +270,9 @@ dialog.small{width:min(460px,calc(100% - 32px))}
 .fu{grid-column:2/-1;font-size:12px;color:var(--muted);margin:0;padding-left:16px}
 .form2{display:grid;grid-template-columns:auto 1fr;gap:10px 12px;align-items:center;padding:16px}
 .form2 label{color:var(--muted);font-size:13px}
+.form2 .pchk{display:flex;gap:8px;align-items:flex-start;line-height:1.5}
+.form2 .pchk b{color:var(--text,inherit);font-weight:600}
+.form2 .pchk input{margin-top:3px}
 .dlg footer{display:flex;gap:8px;justify-content:flex-end;padding:12px 16px;border-top:1px solid var(--rule)}
 .freq{font-size:11px;color:var(--warn);white-space:nowrap}
 .review{font-size:11px;color:var(--over)}
@@ -405,6 +408,8 @@ textarea.paste{width:100%;min-height:150px;font-family:var(--font-num);font-size
       <select id="cField"><option>정보관리기술사</option><option>컴퓨터시스템응용기술사</option><option>정보통신기술사</option><option>기타</option></select>
       <label for="cRound">회차</label><input type="text" id="cRound" placeholder="예: 140">
       <label for="cGrp">그룹</label><input type="text" id="cGrp" list="grpList" placeholder="예: 139재기회 (목록에서 고르거나 새로 입력)"><datalist id="grpList"></datalist>
+      <span style="color:var(--muted);font-size:13px;align-self:start">공개 범위</span>
+      <label class="pchk"><input type="checkbox" id="cPersonal"><span><b>개인 응시자</b><br>공용 목록에 올리지 않습니다. 나와 초대한 사람·면접위원만 이 응시자를 봅니다</span></label>
       <label for="cEmail">응시자 이메일</label><input type="text" id="cEmail" placeholder="선택. 넣으면 응시자 본인도 자기 기록을 봅니다">
       <label for="cInvIn" style="align-self:start;padding-top:4px">초대</label>
       <div class="invBox"><div class="inv" id="cInv"></div>
@@ -521,7 +526,7 @@ const API = {
   async boot(){
     const [mem, cands, sess, dir] = (await Promise.all([
       sb.from("pe_members").select("email,name,role,active"),
-      sb.from("pe_candidates").select("id,name,field,round,email,memo,img_path,created_by,invited,grp").order("created_at"),
+      sb.from("pe_candidates").select("id,name,field,round,email,memo,img_path,created_by,invited,grp,personal").order("created_at"),
       sb.from("pe_sessions").select("id,cand_id,date,time,interviewers,plan_iv"),
       sb.rpc("pe_cand_dir_g"),
     ])).map(must);
@@ -531,7 +536,7 @@ const API = {
       me: {email:ME, name:me.name || ME.split("@")[0], admin:me.role === "admin"},
       admins: mem.filter(m => m.active && m.role === "admin").map(m => m.email),
       members: mem.filter(m => m.active).map(m => ({email:m.email, name:m.name || m.email.split("@")[0]})),
-      cands: cands.map(c => ({id:c.id, name:c.name, field:c.field, round:c.round, email:c.email, memo:c.memo, hasImg:!!c.img_path, imgPath:c.img_path, createdBy:c.created_by, invited:c.invited || [], grp:c.grp || ""})),
+      cands: cands.map(c => ({id:c.id, name:c.name, field:c.field, round:c.round, email:c.email, memo:c.memo, hasImg:!!c.img_path, imgPath:c.img_path, createdBy:c.created_by, invited:c.invited || [], grp:c.grp || "", personal:!!c.personal})),
       dir: dir.map(d => ({id:d.id, name:d.name, field:d.field, round:d.round, createdBy:d.created_by, invited:d.invited || [], grp:d.grp || ""})),
       sessions: sess.map(s => ({id:s.id, candId:s.cand_id, date:s.date, time:s.time || "", interviewers:s.interviewers, planIv:s.plan_iv || ""})),
     };
@@ -580,10 +585,10 @@ const API = {
     const isNew = !DB || !DB.cands.some(c => c.id === x.id);
     if (isNew) {
       must(await sb.from("pe_candidates").upsert({id:x.id, name:x.name, field:x.field || "", round:x.round || "",
-        email:(x.email || "").trim().toLowerCase(), invited:x.invited || [], created_by:ME, grp:x.grp || ""}, {onConflict:"id", ignoreDuplicates:true}));
+        email:(x.email || "").trim().toLowerCase(), invited:x.invited || [], created_by:ME, grp:x.grp || "", personal:!!x.personal}, {onConflict:"id", ignoreDuplicates:true}));
     } else {
       const patch = {};
-      ["name","field","round","email","memo","invited","grp"].forEach(k => { if (k in x) patch[k] = k === "email" ? String(x[k]).trim().toLowerCase() : x[k]; });
+      ["name","field","round","email","memo","invited","grp","personal"].forEach(k => { if (k in x) patch[k] = k === "email" ? String(x[k]).trim().toLowerCase() : x[k]; });
       must(await sb.from("pe_candidates").update(patch).eq("id", x.id));
     }
     return withBoot ? {id:x.id, boot:await API.boot()} : x.id;
@@ -721,10 +726,13 @@ function renderTree(){
   const lockedHtml = d => `<details class="nolook"><summary><span class="noeye" title="열람 권한 없음" aria-label="열람 권한 없음">${ICON.noeye}</span>${esc(d.name)}<span class="sub">초대 필요</span></summary>
       <div class="locked">${esc(String(d.field).replace("기술사",""))}${d.round?` · ${esc(d.round)}회`:""}<br>열람하시려면 관리자나 이 응시자의 면접위원에게 초대를 요청하세요</div></details>`;
   const locked = DB.dir.filter(d => !mine.has(d.id));
-  const groups = [...new Set([...DB.cands, ...locked].map(x => x.grp || ""))].sort((a,b) => (a === "") - (b === "") || a.localeCompare(b, "ko"));
-  $("#tree").innerHTML = mineHtml + groups.map(g => {
+  // 개인 응시자는 그룹 폴더 대신 "개인 응시자" 폴더 하나에 모은다 (공용 목록에는 안 뜬다)
+  const pers = DB.cands.filter(c => c.personal), shared = DB.cands.filter(c => !c.personal);
+  const persHtml = pers.length ? `<details class="grp" data-k="personal" ${isOpen("personal", true) ? "open" : ""}><summary>개인 응시자<span class="sub">${pers.length}명 · 비공개</span></summary><div class="gin">${pers.map(candHtml).join("")}</div></details>` : "";
+  const groups = [...new Set([...shared, ...locked].map(x => x.grp || ""))].sort((a,b) => (a === "") - (b === "") || a.localeCompare(b, "ko"));
+  $("#tree").innerHTML = mineHtml + persHtml + groups.map(g => {
     const k = "g:" + g;
-    const cs = DB.cands.filter(c => (c.grp || "") === g), ls = locked.filter(d => (d.grp || "") === g);
+    const cs = shared.filter(c => (c.grp || "") === g), ls = locked.filter(d => (d.grp || "") === g);
     return `<details class="grp" data-k="${esc(k)}" ${isOpen(k, true) ? "open" : ""}><summary>${esc(g || "미분류")}<span class="sub">${cs.length + ls.length}명</span></summary>
       <div class="gin">${cs.map(candHtml).join("")}${ls.map(lockedHtml).join("")}</div></details>`;
   }).join("") + `<button class="leaf add" style="padding-left:6px" id="newCand">+ 응시자 추가</button>`;
@@ -906,6 +914,8 @@ function openCandDlg(c){
   const grps = [...new Set([...DB.cands, ...DB.dir].map(x => x.grp).filter(Boolean))].sort((a,b) => a.localeCompare(b, "ko"));
   $("#grpList").innerHTML = grps.map(g => `<option value="${esc(g)}">`).join("");
   $("#cGrp").value = c ? (c.grp || "") : ((cand() && cand().grp) || (grps.length === 1 ? grps[0] : ""));
+  $("#cPersonal").checked = c ? !!c.personal : false;
+  $("#cPersonal").disabled = !!c && !(DB.me.admin || c.createdBy === DB.me.email);
   invList = c ? [...c.invited] : []; invNames = {}; $("#cInvIn").value = ""; $("#cInvName").value = ""; renderInv();
   $("#cDel").hidden = !c || !(DB.me.admin || c.createdBy === DB.me.email);
   $("#cDel").textContent = "응시자 삭제"; cDelArmed = false;
@@ -931,6 +941,7 @@ $("#cDel").onclick = () => {
 $("#cForm").onsubmit = e => {
   e.preventDefault();
   const x = {name:$("#cName").value.trim(), field:$("#cField").value, round:$("#cRound").value.trim(), email:$("#cEmail").value.trim(), grp:$("#cGrp").value.trim()};
+  if (!$("#cPersonal").disabled) x.personal = $("#cPersonal").checked;
   x.id = editingCand ? editingCand.id : newCandId;
   if (!takeInv()) return;
   x.invited = [...invList]; x.invNames = {...invNames};
