@@ -79,7 +79,7 @@ select,input[type=text],input[type=search]{background:var(--sheet);border:1px so
 .menuBtn{display:none}
 @media (max-width:1000px){
   .app{grid-template-columns:1fr}
-  .side{position:fixed;left:0;top:0;bottom:0;width:260px;z-index:15;transform:translateX(-100%);transition:transform .2s}
+  .side{position:fixed;left:0;top:0;bottom:0;height:auto;padding-bottom:calc(14px + env(safe-area-inset-bottom,0px));width:260px;z-index:15;transform:translateX(-100%);transition:transform .2s}
   .app.open .side{transform:none;box-shadow:0 0 0 100vmax rgb(0 0 0 / .3)}
   .menuBtn{display:inline-block}
 }
@@ -232,6 +232,11 @@ dialog.report{width:min(1060px,calc(100% - 32px))}
 .inv{display:flex;flex-wrap:wrap;gap:4px 10px;max-height:160px;overflow-y:auto;font-size:13px}
 .inv .chip button{border:0;background:none;color:var(--muted);cursor:pointer;padding:0 0 0 4px}
 .invBox{display:flex;flex-direction:column;gap:6px}
+.tfind{padding:0 2px 6px}
+.tfind input{width:100%;font-size:13px;padding:5px 8px}
+.tree details.rest>summary{font-size:12px;color:var(--muted)}
+.tree .tnone{font-size:12px;color:var(--muted);padding:4px 8px}
+.tree .ics{font-size:12px}
 .tree .locked{font-size:12px;color:var(--muted);padding:4px 8px 6px 22px}
 .tree .nolook{opacity:.45}
 .tree .noeye svg{width:13px;height:13px;vertical-align:-2px;margin-right:4px}
@@ -342,11 +347,12 @@ textarea.paste{width:100%;min-height:150px;font-family:var(--font-num);font-size
 <div class="app" id="app">
   <aside class="side" id="side">
     <div class="brand"><h1>기술사 면접실</h1></div>
+    <button class="leaf add" style="padding-left:6px" id="adminBtn" hidden>관리자 페이지</button>
     <div>
       <div class="label" style="padding:0 6px 4px">응시자</div>
+      <div class="tfind"><input type="search" id="treeQ" placeholder="이름 검색 (응시자·면접위원)" aria-label="응시자·면접위원 이름 검색" autocomplete="off"></div>
       <nav class="tree" id="tree"></nav>
     </div>
-    <button class="leaf add" style="padding-left:6px" id="adminBtn" hidden>관리자 페이지</button>
     <div class="foot"><a href="guide.html" target="_blank" rel="noopener">사용 설명서</a><span id="adminLine"></span></div>
     <div class="foot" id="meLine" style="margin-top:0"></div>
   </aside>
@@ -814,22 +820,38 @@ function sealedForMe(s){
 }
 // "내 응시자": 내가 등록했거나, 내가 응시자 본인이거나, 내가 면접위원인 세션이 있는 응시자
 const myCand = c => c.createdBy === DB.me.email || c.email === DB.me.email || DB.sessions.some(s => s.candId === c.id && s.interviewers.includes(DB.me.email));
+// 펼침 기준: 내가 응시자 본인이거나 면접위원인 응시자. 관리자는 일괄 등록한 사람이 너무 많아 "등록"은 빼고, 회원은 내가 등록한 응시자도 포함.
+const involved = c => c.email === DB.me.email || (!DB.me.admin && c.createdBy === DB.me.email) || DB.sessions.some(s => s.candId === c.id && s.interviewers.includes(DB.me.email));
 function renderTree(){
   const mine = new Set(DB.cands.map(c => c.id));
-  const isOpen = (k, def) => TREE_OPEN[k] === undefined ? def : TREE_OPEN[k];
+  // 검색: 응시자 이름·면접위원 이름·그룹 이름. 검색 중에는 맞는 것만 보이고 전부 펼친다.
+  const Q = ($("#treeQ").value || "").trim().toLowerCase();
+  const hitS = s => Q && ivNames(s).toLowerCase().includes(Q);
+  const hit = c => !Q || String(c.name).toLowerCase().includes(Q) || String(c.grp || "").toLowerCase().includes(Q) || DB.sessions.some(s => s.candId === c.id && hitS(s));
+  const isOpen = (k, def) => Q ? true : TREE_OPEN[k] === undefined ? def : TREE_OPEN[k];
   const leaf = (s, who) => `<button class="leaf ${String(s.date) < today() ? "past" : ""}" data-s="${s.id}" ${s.id===cur?'aria-current="true"':""}><span class="dot"></span>${sWhen(s)}${canWrite(s) ? "" : `<span class="ro">열람</span>`}<span class="who">${esc(who)}</span></button>`;
   // 내가 면접위원인 세션: 날짜순
   // 내 즉석 면접은 "즉석 면접" 폴더에만 둔다 (내 면접 일정에는 안 섞는다)
   const myQuick = DB.cands.filter(c => c.quick && c.createdBy === DB.me.email), quickIds = new Set(myQuick.map(c => c.id));
-  const myS = DB.sessions.filter(s => s.interviewers.includes(DB.me.email) && !quickIds.has(s.candId)).sort((a,b) => sKey(a).localeCompare(sKey(b)));
-  const left = myS.filter(s => String(s.date) >= today()).length;
   const candName = id => (DB.cands.find(c => c.id === id) || {}).name || "";
-  const mineHtml = myS.length ? `<details class="grp" data-k="mine" ${isOpen("mine", true) ? "open" : ""}><summary>내 면접 일정<span class="sub">${left}건 남음</span></summary><div class="gin">${myS.map(s => leaf(s, candName(s.candId))).join("")}</div></details>` : "";
+  const sHit = s => !Q || candName(s.candId).toLowerCase().includes(Q) || hitS(s);
+  const myAllS = DB.sessions.filter(s => s.interviewers.includes(DB.me.email) && !quickIds.has(s.candId)).sort((a,b) => sKey(a).localeCompare(sKey(b)));
+  const myS = myAllS.filter(sHit);
+  const left = myAllS.filter(s => String(s.date) >= today()).length;
+  // 내가 응시자 본인인 세션 (면접위원 일정과 따로 본다)
+  const myCandIds = new Set(DB.cands.filter(c => c.email === DB.me.email && !c.quick).map(c => c.id));
+  const myAllC = DB.sessions.filter(s => myCandIds.has(s.candId)).sort((a,b) => sKey(a).localeCompare(sKey(b)));
+  const myC = myAllC.filter(sHit);
+  const leftC = myAllC.filter(s => String(s.date) >= today()).length;
+  const icsBtn = [...myAllS, ...myAllC].some(s => String(s.date) >= today()) ? `<button class="leaf add ics" id="icsBtn" title="앞으로 남은 내 면접·응시 일정을 휴대폰·PC 캘린더에 넣습니다. 시작 30분 전에 알림이 옵니다.">캘린더에 넣기 (30분 전 알림)</button>` : "";
+  const mineHtml = (myS.length ? `<details class="grp" data-k="mine" ${isOpen("mine", true) ? "open" : ""}><summary>내 면접 일정<span class="sub">${left}건 남음</span></summary><div class="gin">${myS.map(s => leaf(s, candName(s.candId))).join("")}</div></details>` : "")
+    + (myC.length ? `<details class="grp" data-k="mineC" ${isOpen("mineC", true) ? "open" : ""}><summary>내 응시 일정<span class="sub">${leftC}건 남음</span></summary><div class="gin">${myC.map(s => leaf(s, ivNames(s))).join("")}</div></details>` : "")
+    + (Q ? "" : icsBtn);
   // 동명이인은 이메일 앞부분이나 등록자를 덧붙인다
   const dupe = n => DB.cands.filter(c => c.name === n).length + DB.dir.filter(d => d.name === n && !mine.has(d.id)).length > 1;
   const candHtml = c => {
     const ss = DB.sessions.filter(s => s.candId === c.id).sort((a,b) => sKey(a).localeCompare(sKey(b)));
-    const k = "c:" + c.id, mineC = myCand(c) && ss.length > 0, extra = dupe(c.name) ? (c.email ? c.email.split("@")[0] : nameOf(c.createdBy) + " 등록") : "";
+    const k = "c:" + c.id, mineC = involved(c) && ss.length > 0, extra = dupe(c.name) ? (c.email ? c.email.split("@")[0] : nameOf(c.createdBy) + " 등록") : "";
     return `<details data-k="${k}" ${isOpen(k, ss.some(s => s.id === cur) || mineC) ? "open" : ""}><summary>${esc(c.name)}${extra ? ` <small class="muted">${esc(extra)}</small>` : ""}<span class="sub">${ss.length}회</span></summary>
       ${ss.map(s => leaf(s, ivNames(s))).join("")}
       <button class="leaf add" data-new="${c.id}">+ 새 세션</button>
@@ -838,12 +860,13 @@ function renderTree(){
   // 열람 권한 없는 응시자: 이름은 그대로(중복 등록 방지), 흐리게 + 눈 가림 아이콘
   const lockedHtml = d => `<details class="nolook"><summary><span class="noeye" title="열람 권한 없음" aria-label="열람 권한 없음">${ICON.noeye}</span>${esc(d.name)}<span class="sub">초대 필요</span></summary>
       <div class="locked">${esc(String(d.field).replace("기술사",""))}${d.round?` · ${esc(d.round)}회`:""}<br>열람하시려면 관리자나 이 응시자의 면접위원에게 초대를 요청하세요</div></details>`;
-  const locked = DB.dir.filter(d => !mine.has(d.id));
+  const locked = DB.dir.filter(d => !mine.has(d.id) && hit(d));
   // 개인 응시자는 그룹 폴더 대신 "개인 응시자" 폴더 하나에 모은다 (공용 목록에는 안 뜬다)
-  const pers = DB.cands.filter(c => c.personal && !quickIds.has(c.id) && !c.groupId), shared = DB.cands.filter(c => !c.personal);
+  const pers = DB.cands.filter(c => c.personal && !quickIds.has(c.id) && !c.groupId && hit(c)), shared = DB.cands.filter(c => !c.personal && hit(c));
   // 스터디: 그룹원끼리만 보는 비공개 폴더. 그룹원이 아닌 관리자에게는 응시자가 없는 스터디는 안 보인다.
   const studyHtml = DB.groups.filter(g => g.members.some(m => m.email === DB.me.email) || DB.cands.some(c => c.groupId === g.id)).map(g => {
-    const k = "st:" + g.id, cs = DB.cands.filter(c => c.groupId === g.id);
+    const k = "st:" + g.id, cs = DB.cands.filter(c => c.groupId === g.id && hit(c));
+    if (Q && !cs.length) return "";
     return `<details class="grp" data-k="${esc(k)}" ${isOpen(k, true) ? "open" : ""}><summary>스터디 · ${esc(g.name)}<span class="sub">${g.members.length}명 · 비공개</span></summary><div class="gin">
       ${cs.map(candHtml).join("")}<button class="leaf add" data-st-new="${esc(g.id)}">+ 응시자 추가</button><button class="leaf add" data-st="${esc(g.id)}">그룹원 관리</button></div></details>`;
   }).join("");
@@ -852,9 +875,9 @@ function renderTree(){
   const lastDate = c => DB.sessions.filter(s => s.candId === c.id).map(s => String(s.date)).sort().pop() || "";
   const cut = (d => { d.setDate(d.getDate() - 30); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; })(new Date());
   const byRecent = (a,b) => lastDate(b).localeCompare(lastDate(a));
-  const qNew = myQuick.filter(c => lastDate(c) >= cut).sort(byRecent), qOld = myQuick.filter(c => lastDate(c) < cut).sort(byRecent);
+  const qNew = myQuick.filter(c => lastDate(c) >= cut && hit(c)).sort(byRecent), qOld = myQuick.filter(c => lastDate(c) < cut && hit(c)).sort(byRecent);
   // 시작 버튼은 상단 오른쪽(#quickTop). 사이드바에는 만든 즉석 면접만 모아 둔다.
-  const quickHtml = !myQuick.length ? "" : `<details class="grp" data-k="quick" ${isOpen("quick", true) ? "open" : ""}><summary>즉석 면접<span class="sub">${myQuick.length}건 · 비공개</span></summary><div class="gin">`
+  const quickHtml = !(qNew.length + qOld.length) ? "" : `<details class="grp" data-k="quick" ${isOpen("quick", true) ? "open" : ""}><summary>즉석 면접<span class="sub">${myQuick.length}건 · 비공개</span></summary><div class="gin">`
     + `${qNew.map(candHtml).join("")}`
     + (qOld.length ? `<details class="grp" data-k="quickOld" ${isOpen("quickOld", false) ? "open" : ""}><summary>30일 지난 즉석 면접<span class="sub">${qOld.length}건</span></summary><div class="gin">${qOld.map(candHtml).join("")}</div></details>` : "")
     + `</div></details>`;
@@ -862,9 +885,15 @@ function renderTree(){
   $("#tree").innerHTML = mineHtml + quickHtml + studyHtml + persHtml + groups.map(g => {
     const k = "g:" + g;
     const cs = shared.filter(c => (c.grp || "") === g), ls = locked.filter(d => (d.grp || "") === g);
-    return `<details class="grp" data-k="${esc(k)}" ${isOpen(k, cs.some(c => myCand(c) || DB.sessions.some(s => s.candId === c.id && s.id === cur))) ? "open" : ""}><summary>${esc(g || "미분류")}<span class="sub">${cs.length + ls.length}명</span></summary>
-      <div class="gin">${cs.map(candHtml).join("")}${ls.map(lockedHtml).join("")}</div></details>`;
-  }).join("") + `<button class="leaf add" style="padding-left:6px" id="newCand">+ 응시자 추가</button>`
+    const hasCur = c => DB.sessions.some(s => s.candId === c.id && s.id === cur);
+    // 내 응시자는 위에 펼쳐 두고, 나머지는 "그 외 N명"에 접어 둔다 (검색 중에는 전부 펼침)
+    const mineCs = Q ? cs : cs.filter(involved), restCs = Q ? [] : cs.filter(c => !involved(c)), nRest = restCs.length + (Q ? 0 : ls.length);
+    const body = mineCs.length && nRest
+      ? mineCs.map(candHtml).join("") + `<details class="rest" data-k="r:${esc(g)}" ${isOpen("r:" + g, restCs.some(hasCur)) ? "open" : ""}><summary>그 외 ${nRest}명</summary>${restCs.map(candHtml).join("")}${ls.map(lockedHtml).join("")}</details>`
+      : cs.map(candHtml).join("") + ls.map(lockedHtml).join("");
+    return `<details class="grp" data-k="${esc(k)}" ${isOpen(k, cs.some(c => involved(c) || hasCur(c))) ? "open" : ""}><summary>${esc(g || "미분류")}<span class="sub">${cs.length + ls.length}명</span></summary>
+      <div class="gin">${body}</div></details>`;
+  }).join("") + (Q && !mineHtml && !quickHtml && !studyHtml && !persHtml && !groups.length ? `<div class="tnone">"${esc(Q)}"에 맞는 이름이 없습니다</div>` : "") + `<button class="leaf add" style="padding-left:6px" id="newCand">+ 응시자 추가</button>`
     + `<button class="leaf add" style="padding-left:6px" id="newStudy" title="서로 봐주는 동기 4~5명이 비공개로 함께 쓰는 폴더">+ 스터디 만들기</button>`;
 }
 $("#tree").addEventListener("toggle", e => { const k = e.target.dataset && e.target.dataset.k; if (k) TREE_OPEN[k] = e.target.open; }, true);
@@ -877,7 +906,45 @@ $("#tree").onclick = async e => {
   else if (e.target.closest("[data-st-new]")) openCandDlg(null, e.target.closest("[data-st-new]").dataset.stNew);
   else if (e.target.closest("[data-st]")) openStudy(e.target.closest("[data-st]").dataset.st);
   else if (e.target.id === "newStudy") newStudy();
+  else if (e.target.id === "icsBtn") downloadIcs();
 };
+$("#treeQ").addEventListener("input", () => { if (DB) renderTree(); });
+$("#treeQ").addEventListener("keydown", e => { if (e.key === "Escape") { e.target.value = ""; if (DB) renderTree(); } });
+// 30분 전 알림 POC: 앞으로 남은 내 면접·응시 일정을 .ics 한 파일로. 휴대폰·PC 캘린더가 알림을 띄운다(서버 없음).
+// 일정이 바뀌면 다시 받아야 한다(같은 UID라 다시 넣으면 대부분 캘린더가 덮어쓴다).
+function downloadIcs(){
+  const me = DB.me.email, now = today();
+  const cand = id => DB.cands.find(c => c.id === id) || {};
+  const list = DB.sessions.filter(s => String(s.date) >= now && (s.interviewers.includes(me) || (cand(s.candId).email === me && !cand(s.candId).quick)))
+    .sort((a,b) => sKey(a).localeCompare(sKey(b)));
+  if (!list.length) return toast("앞으로 남은 일정이 없습니다");
+  const esc2 = t => String(t).replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\r?\n/g, "\\n");
+  const two = n => String(n).padStart(2, "0");
+  // 시각은 한국 시간(UTC+9)으로 보고 UTC로 적는다
+  const utc = (d, hm, addMin) => { const [y,m,dd] = String(d).split("-").map(Number), [h,mi] = hm.split(":").map(Number);
+    const t = new Date(Date.UTC(y, m-1, dd, h - 9, mi + (addMin || 0)));
+    return `${t.getUTCFullYear()}${two(t.getUTCMonth()+1)}${two(t.getUTCDate())}T${two(t.getUTCHours())}${two(t.getUTCMinutes())}00Z`; };
+  const stamp = utc(now, "09:00");
+  const app = location.origin + location.pathname;
+  const ev = list.map(s => {
+    const c = cand(s.candId), asIv = s.interviewers.includes(me);
+    const title = asIv ? `[모의면접] 면접위원 · 응시자 ${c.name}` : `[모의면접] 응시 · 면접위원 ${ivNames(s) || "미정"}`;
+    const desc = `기술사 면접실 ${app}` + (s.meet ? `\n접속 링크 ${s.meet}` : "");
+    const when = /^\d{1,2}:\d{2}$/.test(s.time || "")
+      ? [`DTSTART:${utc(s.date, s.time)}`, `DTEND:${utc(s.date, s.time, 40)}`]
+      : [`DTSTART;VALUE=DATE:${String(s.date).replace(/-/g, "")}`];
+    return ["BEGIN:VEVENT", `UID:${s.id}@pe-interview-room`, `DTSTAMP:${stamp}`, ...when, `SUMMARY:${esc2(title)}`, `DESCRIPTION:${esc2(desc)}`,
+      ...(s.meet ? [`URL:${s.meet}`] : []),
+      "BEGIN:VALARM", "ACTION:DISPLAY", `DESCRIPTION:${esc2(title + " 30분 전")}`, "TRIGGER:-PT30M", "END:VALARM", "END:VEVENT"].join("\r\n");
+  });
+  const ics = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//pe-interview-room//KO", "CALSCALE:GREGORIAN", "METHOD:PUBLISH", ...ev, "END:VCALENDAR"].join("\r\n") + "\r\n";
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([ics], {type:"text/calendar;charset=utf-8"}));
+  a.download = "기술사면접실_내일정.ics";
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  toast(`${list.length}건을 캘린더 파일로 받았습니다. 파일을 열어 캘린더에 추가하세요`);
+}
 // 즉석 면접: 숨은 개인 응시자 + 오늘 세션을 한 번에 만들고 바로 연다. 정식 응시자로 바꾸려면 정보 수정.
 $("#quickTop").onclick = e => { if (DB) startQuick(e.currentTarget); };
 function startQuick(btn){
