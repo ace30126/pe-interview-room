@@ -236,7 +236,6 @@ dialog.report{width:min(1060px,calc(100% - 32px))}
 .tfind input{width:100%;font-size:13px;padding:5px 8px}
 .tree details.rest>summary{font-size:12px;color:var(--muted)}
 .tree .tnone{font-size:12px;color:var(--muted);padding:4px 8px}
-.tree .ics{font-size:12px}
 .tree .locked{font-size:12px;color:var(--muted);padding:4px 8px 6px 22px}
 .tree .nolook{opacity:.45}
 .tree .noeye svg{width:13px;height:13px;vertical-align:-2px;margin-right:4px}
@@ -843,10 +842,8 @@ function renderTree(){
   const myAllC = DB.sessions.filter(s => myCandIds.has(s.candId)).sort((a,b) => sKey(a).localeCompare(sKey(b)));
   const myC = myAllC.filter(sHit);
   const leftC = myAllC.filter(s => String(s.date) >= today()).length;
-  const icsBtn = [...myAllS, ...myAllC].some(s => String(s.date) >= today()) ? `<button class="leaf add ics" id="icsBtn" title="앞으로 남은 내 면접·응시 일정을 휴대폰·PC 캘린더에 넣습니다. 시작 30분 전에 알림이 옵니다.">캘린더에 넣기 (30분 전 알림)</button>` : "";
   const mineHtml = (myS.length ? `<details class="grp" data-k="mine" ${isOpen("mine", true) ? "open" : ""}><summary>내 면접 일정<span class="sub">${left}건 남음</span></summary><div class="gin">${myS.map(s => leaf(s, candName(s.candId))).join("")}</div></details>` : "")
-    + (myC.length ? `<details class="grp" data-k="mineC" ${isOpen("mineC", true) ? "open" : ""}><summary>내 응시 일정<span class="sub">${leftC}건 남음</span></summary><div class="gin">${myC.map(s => leaf(s, ivNames(s))).join("")}</div></details>` : "")
-    + (Q ? "" : icsBtn);
+    + (myC.length ? `<details class="grp" data-k="mineC" ${isOpen("mineC", true) ? "open" : ""}><summary>내 응시 일정<span class="sub">${leftC}건 남음</span></summary><div class="gin">${myC.map(s => leaf(s, ivNames(s))).join("")}</div></details>` : "");
   // 동명이인은 이메일 앞부분이나 등록자를 덧붙인다
   const dupe = n => DB.cands.filter(c => c.name === n).length + DB.dir.filter(d => d.name === n && !mine.has(d.id)).length > 1;
   const candHtml = c => {
@@ -906,45 +903,9 @@ $("#tree").onclick = async e => {
   else if (e.target.closest("[data-st-new]")) openCandDlg(null, e.target.closest("[data-st-new]").dataset.stNew);
   else if (e.target.closest("[data-st]")) openStudy(e.target.closest("[data-st]").dataset.st);
   else if (e.target.id === "newStudy") newStudy();
-  else if (e.target.id === "icsBtn") downloadIcs();
 };
 $("#treeQ").addEventListener("input", () => { if (DB) renderTree(); });
 $("#treeQ").addEventListener("keydown", e => { if (e.key === "Escape") { e.target.value = ""; if (DB) renderTree(); } });
-// 30분 전 알림 POC: 앞으로 남은 내 면접·응시 일정을 .ics 한 파일로. 휴대폰·PC 캘린더가 알림을 띄운다(서버 없음).
-// 일정이 바뀌면 다시 받아야 한다(같은 UID라 다시 넣으면 대부분 캘린더가 덮어쓴다).
-function downloadIcs(){
-  const me = DB.me.email, now = today();
-  const cand = id => DB.cands.find(c => c.id === id) || {};
-  const list = DB.sessions.filter(s => String(s.date) >= now && (s.interviewers.includes(me) || (cand(s.candId).email === me && !cand(s.candId).quick)))
-    .sort((a,b) => sKey(a).localeCompare(sKey(b)));
-  if (!list.length) return toast("앞으로 남은 일정이 없습니다");
-  const esc2 = t => String(t).replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\r?\n/g, "\\n");
-  const two = n => String(n).padStart(2, "0");
-  // 시각은 한국 시간(UTC+9)으로 보고 UTC로 적는다
-  const utc = (d, hm, addMin) => { const [y,m,dd] = String(d).split("-").map(Number), [h,mi] = hm.split(":").map(Number);
-    const t = new Date(Date.UTC(y, m-1, dd, h - 9, mi + (addMin || 0)));
-    return `${t.getUTCFullYear()}${two(t.getUTCMonth()+1)}${two(t.getUTCDate())}T${two(t.getUTCHours())}${two(t.getUTCMinutes())}00Z`; };
-  const stamp = utc(now, "09:00");
-  const app = location.origin + location.pathname;
-  const ev = list.map(s => {
-    const c = cand(s.candId), asIv = s.interviewers.includes(me);
-    const title = asIv ? `[모의면접] 면접위원 · 응시자 ${c.name}` : `[모의면접] 응시 · 면접위원 ${ivNames(s) || "미정"}`;
-    const desc = `기술사 면접실 ${app}` + (s.meet ? `\n접속 링크 ${s.meet}` : "");
-    const when = /^\d{1,2}:\d{2}$/.test(s.time || "")
-      ? [`DTSTART:${utc(s.date, s.time)}`, `DTEND:${utc(s.date, s.time, 40)}`]
-      : [`DTSTART;VALUE=DATE:${String(s.date).replace(/-/g, "")}`];
-    return ["BEGIN:VEVENT", `UID:${s.id}@pe-interview-room`, `DTSTAMP:${stamp}`, ...when, `SUMMARY:${esc2(title)}`, `DESCRIPTION:${esc2(desc)}`,
-      ...(s.meet ? [`URL:${s.meet}`] : []),
-      "BEGIN:VALARM", "ACTION:DISPLAY", `DESCRIPTION:${esc2(title + " 30분 전")}`, "TRIGGER:-PT30M", "END:VALARM", "END:VEVENT"].join("\r\n");
-  });
-  const ics = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//pe-interview-room//KO", "CALSCALE:GREGORIAN", "METHOD:PUBLISH", ...ev, "END:VCALENDAR"].join("\r\n") + "\r\n";
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([ics], {type:"text/calendar;charset=utf-8"}));
-  a.download = "기술사면접실_내일정.ics";
-  document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-  toast(`${list.length}건을 캘린더 파일로 받았습니다. 파일을 열어 캘린더에 추가하세요`);
-}
 // 즉석 면접: 숨은 개인 응시자 + 오늘 세션을 한 번에 만들고 바로 연다. 정식 응시자로 바꾸려면 정보 수정.
 $("#quickTop").onclick = e => { if (DB) startQuick(e.currentTarget); };
 function startQuick(btn){
