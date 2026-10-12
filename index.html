@@ -764,7 +764,7 @@ let editing = null;       // 질문 글을 고치는 중인 카드 id
 let pendingImg = null, replacing = false;
 const imgCache = {};      // 사진 경로 → dataURL
 const VERS = {};          // 응시자 id → [{id,path,since}] (since 오름차순)
-const TREE_OPEN = {};     // 사이드바 펼침 상태 (그룹·내 일정은 기본 펼침)
+const TREE_OPEN = {};     // 사이드바 펼침 상태 (첫 화면은 '내 면접 일정'만 펼침, 나머지는 사용자가 연 것만 기억)
 let dirty = false, saving = false, memoDirty = false;
 // 저장 대기 목록: 바꾼 카드(cards)·시간을 손댄 카드(t)·기록만 쓴 카드(notes)·지운 카드(del)·순서·세션 필드
 const PEND = {cards:new Set(), t:new Set(), notes:new Set(), del:new Set(), order:false, sess:new Set()};
@@ -843,13 +843,13 @@ function renderTree(){
   const myC = myAllC.filter(sHit);
   const leftC = myAllC.filter(s => String(s.date) >= today()).length;
   const mineHtml = (myS.length ? `<details class="grp" data-k="mine" ${isOpen("mine", true) ? "open" : ""}><summary>내 면접 일정<span class="sub">${left}건 남음</span></summary><div class="gin">${myS.map(s => leaf(s, candName(s.candId))).join("")}</div></details>` : "")
-    + (myC.length ? `<details class="grp" data-k="mineC" ${isOpen("mineC", true) ? "open" : ""}><summary>내 응시 일정<span class="sub">${leftC}건 남음</span></summary><div class="gin">${myC.map(s => leaf(s, ivNames(s))).join("")}</div></details>` : "");
+    + (myC.length ? `<details class="grp" data-k="mineC" ${isOpen("mineC", false) ? "open" : ""}><summary>내 응시 일정<span class="sub">${leftC}건 남음</span></summary><div class="gin">${myC.map(s => leaf(s, ivNames(s))).join("")}</div></details>` : "");
   // 동명이인은 이메일 앞부분이나 등록자를 덧붙인다
   const dupe = n => DB.cands.filter(c => c.name === n).length + DB.dir.filter(d => d.name === n && !mine.has(d.id)).length > 1;
   const candHtml = c => {
     const ss = DB.sessions.filter(s => s.candId === c.id).sort((a,b) => sKey(a).localeCompare(sKey(b)));
-    const k = "c:" + c.id, mineC = involved(c) && ss.length > 0, extra = dupe(c.name) ? (c.email ? c.email.split("@")[0] : nameOf(c.createdBy) + " 등록") : "";
-    return `<details data-k="${k}" ${isOpen(k, ss.some(s => s.id === cur) || mineC) ? "open" : ""}><summary>${esc(c.name)}${extra ? ` <small class="muted">${esc(extra)}</small>` : ""}<span class="sub">${ss.length}회</span></summary>
+    const k = "c:" + c.id, extra = dupe(c.name) ? (c.email ? c.email.split("@")[0] : nameOf(c.createdBy) + " 등록") : "";
+    return `<details data-k="${k}" ${isOpen(k, false) ? "open" : ""}><summary>${esc(c.name)}${extra ? ` <small class="muted">${esc(extra)}</small>` : ""}<span class="sub">${ss.length}회</span></summary>
       ${ss.map(s => leaf(s, ivNames(s))).join("")}
       <button class="leaf add" data-new="${c.id}">+ 새 세션</button>
       <button class="leaf add" data-edit="${c.id}">정보 수정·삭제</button></details>`;
@@ -864,17 +864,17 @@ function renderTree(){
   const studyHtml = DB.groups.filter(g => g.members.some(m => m.email === DB.me.email) || DB.cands.some(c => c.groupId === g.id)).map(g => {
     const k = "st:" + g.id, cs = DB.cands.filter(c => c.groupId === g.id && hit(c));
     if (Q && !cs.length) return "";
-    return `<details class="grp" data-k="${esc(k)}" ${isOpen(k, true) ? "open" : ""}><summary>스터디 · ${esc(g.name)}<span class="sub">${g.members.length}명 · 비공개</span></summary><div class="gin">
+    return `<details class="grp" data-k="${esc(k)}" ${isOpen(k, false) ? "open" : ""}><summary>스터디 · ${esc(g.name)}<span class="sub">${g.members.length}명 · 비공개</span></summary><div class="gin">
       ${cs.map(candHtml).join("")}<button class="leaf add" data-st-new="${esc(g.id)}">+ 응시자 추가</button><button class="leaf add" data-st="${esc(g.id)}">그룹원 관리</button></div></details>`;
   }).join("");
-  const persHtml = pers.length ? `<details class="grp" data-k="personal" ${isOpen("personal", true) ? "open" : ""}><summary>개인 응시자<span class="sub">${pers.length}명 · 비공개</span></summary><div class="gin">${pers.map(candHtml).join("")}</div></details>` : "";
+  const persHtml = pers.length ? `<details class="grp" data-k="personal" ${isOpen("personal", false) ? "open" : ""}><summary>개인 응시자<span class="sub">${pers.length}명 · 비공개</span></summary><div class="gin">${pers.map(candHtml).join("")}</div></details>` : "";
   // 즉석 면접: 마지막 세션이 30일 지난 것은 아래 "30일 지난 즉석 면접"에 접어 둔다 (지우지 않는다)
   const lastDate = c => DB.sessions.filter(s => s.candId === c.id).map(s => String(s.date)).sort().pop() || "";
   const cut = (d => { d.setDate(d.getDate() - 30); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; })(new Date());
   const byRecent = (a,b) => lastDate(b).localeCompare(lastDate(a));
   const qNew = myQuick.filter(c => lastDate(c) >= cut && hit(c)).sort(byRecent), qOld = myQuick.filter(c => lastDate(c) < cut && hit(c)).sort(byRecent);
   // 시작 버튼은 상단 오른쪽(#quickTop). 사이드바에는 만든 즉석 면접만 모아 둔다.
-  const quickHtml = !(qNew.length + qOld.length) ? "" : `<details class="grp" data-k="quick" ${isOpen("quick", true) ? "open" : ""}><summary>즉석 면접<span class="sub">${myQuick.length}건 · 비공개</span></summary><div class="gin">`
+  const quickHtml = !(qNew.length + qOld.length) ? "" : `<details class="grp" data-k="quick" ${isOpen("quick", false) ? "open" : ""}><summary>즉석 면접<span class="sub">${myQuick.length}건 · 비공개</span></summary><div class="gin">`
     + `${qNew.map(candHtml).join("")}`
     + (qOld.length ? `<details class="grp" data-k="quickOld" ${isOpen("quickOld", false) ? "open" : ""}><summary>30일 지난 즉석 면접<span class="sub">${qOld.length}건</span></summary><div class="gin">${qOld.map(candHtml).join("")}</div></details>` : "")
     + `</div></details>`;
@@ -882,13 +882,12 @@ function renderTree(){
   $("#tree").innerHTML = mineHtml + quickHtml + studyHtml + persHtml + groups.map(g => {
     const k = "g:" + g;
     const cs = shared.filter(c => (c.grp || "") === g), ls = locked.filter(d => (d.grp || "") === g);
-    const hasCur = c => DB.sessions.some(s => s.candId === c.id && s.id === cur);
     // 내 응시자는 위에 펼쳐 두고, 나머지는 "그 외 N명"에 접어 둔다 (검색 중에는 전부 펼침)
     const mineCs = Q ? cs : cs.filter(involved), restCs = Q ? [] : cs.filter(c => !involved(c)), nRest = restCs.length + (Q ? 0 : ls.length);
     const body = mineCs.length && nRest
-      ? mineCs.map(candHtml).join("") + `<details class="rest" data-k="r:${esc(g)}" ${isOpen("r:" + g, restCs.some(hasCur)) ? "open" : ""}><summary>그 외 ${nRest}명</summary>${restCs.map(candHtml).join("")}${ls.map(lockedHtml).join("")}</details>`
+      ? mineCs.map(candHtml).join("") + `<details class="rest" data-k="r:${esc(g)}" ${isOpen("r:" + g, false) ? "open" : ""}><summary>그 외 ${nRest}명</summary>${restCs.map(candHtml).join("")}${ls.map(lockedHtml).join("")}</details>`
       : cs.map(candHtml).join("") + ls.map(lockedHtml).join("");
-    return `<details class="grp" data-k="${esc(k)}" ${isOpen(k, cs.some(c => involved(c) || hasCur(c))) ? "open" : ""}><summary>${esc(g || "미분류")}<span class="sub">${cs.length + ls.length}명</span></summary>
+    return `<details class="grp" data-k="${esc(k)}" ${isOpen(k, false) ? "open" : ""}><summary>${esc(g || "미분류")}<span class="sub">${cs.length + ls.length}명</span></summary>
       <div class="gin">${body}</div></details>`;
   }).join("") + (Q && !mineHtml && !quickHtml && !studyHtml && !persHtml && !groups.length ? `<div class="tnone">"${esc(Q)}"에 맞는 이름이 없습니다</div>` : "") + `<button class="leaf add" style="padding-left:6px" id="newCand">+ 응시자 추가</button>`
     + `<button class="leaf add" style="padding-left:6px" id="newStudy" title="서로 봐주는 동기 4~5명이 비공개로 함께 쓰는 폴더">+ 스터디 만들기</button>`;
@@ -919,7 +918,7 @@ function startQuick(btn){
         {id:rid(), q:INTRO.career, preset:"intro", kind:"career", t:0},
         {id:rid(), q:VISION_Q, preset:"vision", t:0},
       ]});
-      DB = r.boot; TREE_OPEN["c:" + x.id] = true;
+      DB = r.boot; TREE_OPEN.quick = true; TREE_OPEN["c:" + x.id] = true;
       await openSession(r.id); $("#app").classList.remove("open");
       toast("즉석 면접을 열었습니다. 나만 봅니다. 정식 응시자로 바꾸려면 [정보 수정]");
     } catch(err){ toast("즉석 면접을 만들지 못했습니다: " + err.message); }
