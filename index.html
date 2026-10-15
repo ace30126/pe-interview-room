@@ -213,6 +213,7 @@ dialog.report{width:min(1060px,calc(100% - 32px))}
 .page .kpi{display:flex;gap:10px}
 .page .kpi div{border:1px solid #D6DCE0;padding:6px 10px;flex:1}
 .page .kpi b{display:block;font-family:var(--font-num);font-size:16px}
+.page .blk{display:flex;flex-direction:column;gap:7px}
 .page .box{border:1px solid #D6DCE0;padding:8px;white-space:pre-wrap;line-height:1.6}
 .page .imgcap{border:1px solid #D6DCE0}
 .page .imgcap img{display:block;width:100%;height:auto}
@@ -1687,23 +1688,42 @@ function renderReport(){
     <div class="col"><h3>모의면접 결과 · ${esc(c.name)}</h3>
       <div class="meta">${s.date} · ${esc(c.field)}${c.round?` ${esc(c.round)}회`:""} · 면접위원 ${ivs.map(e => esc(nameOf(e))).join(", ")}</div>
       <div class="kpi"><div>총 시간<b>${fmt(total())}</b></div><div>질문<b>${S.cards.length}개</b></div></div>
-      ${s.memo?`<h3>이력카드 요약 메모</h3><div class="box">${esc(s.memo)}</div>`:""}
-      <h3>총평</h3><div class="box">${esc(s.overall || "(총평 미입력)")}</div>
-      ${items.length?`<h3>질문별 피드백</h3>`:""}
     </div><span class="pg"></span></div></div>`;
   const cols = [box.querySelectorAll(".page .col")[1]];
   const newPage = () => {
     box.insertAdjacentHTML("beforeend", `<div class="page-wrap"><div class="page"><div class="col"></div><div class="col"></div><span class="pg"></span></div></div>`);
     cols.push(...box.lastElementChild.querySelectorAll(".col"));
   };
+  const fits = col => col.scrollHeight <= col.clientHeight + 1;
+  const next = () => { ci++; if (ci >= cols.length) newPage(); };
   let ci = 0;
+  // 요약 메모·총평처럼 긴 글: 단에 들어가는 만큼만 넣고 나머지는 다음 단에 "(이어서)"로 흘린다
+  const flowText = (title, text) => {
+    let rest = text, cont = false;
+    while (rest) {
+      const col = cols[ci];
+      col.insertAdjacentHTML("beforeend", `<div class="blk"><h3>${title}${cont?" (이어서)":""}</h3><div class="box"></div></div>`);
+      const el = col.lastElementChild, bx = el.querySelector(".box");
+      bx.textContent = rest;
+      if (fits(col)) return;
+      let lo = 0, hi = rest.length;
+      while (lo < hi) { const m = (lo + hi + 1) >> 1; bx.textContent = rest.slice(0, m); if (fits(col)) lo = m; else hi = m - 1; }
+      const ws = Math.max(rest.lastIndexOf("\n", lo), rest.lastIndexOf(" ", lo));
+      const cut = ws > lo - 40 && ws > 0 ? ws : lo;
+      if (cut < 20 && col.children.length > 1) { el.remove(); next(); continue; }
+      bx.textContent = rest.slice(0, cut).trimEnd();
+      rest = rest.slice(cut).replace(/^\s+/, ""); cont = true; next();
+    }
+  };
+  if (s.memo) flowText("이력카드 요약 메모", s.memo);
+  flowText("총평", s.overall || "(총평 미입력)");
+  if (items.length) items[0] = `<div class="blk"><h3>질문별 피드백</h3>${items[0]}</div>`;
   items.forEach(h => {
     for (;;) {
       const col = cols[ci];
       col.insertAdjacentHTML("beforeend", h);
-      if (col.scrollHeight <= col.clientHeight + 1 || col.children.length === 1) break;
-      col.lastElementChild.remove(); ci++;
-      if (ci >= cols.length) newPage();
+      if (fits(col) || col.children.length === 1) break;
+      col.lastElementChild.remove(); next();
     }
   });
   const pgs = box.querySelectorAll(".pg");
