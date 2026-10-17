@@ -150,7 +150,16 @@ select,input[type=text],input[type=search]{background:var(--sheet);border:1px so
 .totalbar .acts{margin-left:auto;display:flex;gap:6px;flex-wrap:wrap}
 
 .qcard{padding:8px 10px 8px 4px;display:grid;grid-template-columns:18px minmax(0,1fr) auto;gap:4px 8px;border-left:3px solid transparent}
-.qcard.running{border-left-color:var(--ok);background:color-mix(in srgb,var(--ok-soft) 55%,var(--sheet))}
+.qcard.running{border-left-color:var(--ok);background:color-mix(in srgb,var(--ok-soft) 55%,var(--sheet));box-shadow:0 0 0 2px var(--ok);animation:runGlow 1.6s ease-in-out infinite}
+.qcard.running .time{color:var(--ok)}
+/* 시간이 흐르는 카드: 밝은 테두리가 숨 쉬듯 번진다 */
+@keyframes runGlow{0%,100%{box-shadow:0 0 0 2px var(--ok),0 0 0 0 color-mix(in srgb,var(--ok) 45%,transparent)}50%{box-shadow:0 0 0 2px var(--ok),0 0 12px 4px color-mix(in srgb,var(--ok) 45%,transparent)}}
+@media (prefers-reduced-motion:reduce){.qcard.running{animation:none}}
+.endShare{display:flex;flex-direction:column;gap:6px;margin-top:10px;padding-top:10px;border-top:1px solid var(--rule)}
+.endShare .btn{align-self:flex-start}
+#endDlg .hint{font-size:12px;color:var(--muted);margin:0}
+#endDlg #endEcho{color:var(--ink)}
+.qcard .tedit{width:5.5em;font-size:15px;font-weight:600;text-align:right;padding:1px 4px}
 .qcard.dragging{opacity:.45}
 .qcard .byc{display:inline-grid;place-items:center;width:18px;height:18px;border-radius:50%;color:#fff;font-size:11px;font-weight:700;flex:none;align-self:center}
 .qcard .runby{font-size:11px;color:var(--ok);white-space:nowrap}
@@ -457,6 +466,23 @@ textarea.paste{width:100%;min-height:150px;font-family:var(--font-num);font-size
 </dialog>
 
 <datalist id="tagList"></datalist>
+<dialog id="endDlg" class="small">
+  <form method="dialog" class="dlg">
+    <header><h2>면접을 종료할까요?</h2></header>
+    <div class="body">
+      <p id="endLead"></p>
+      <div id="endShare" class="endShare">
+        <label class="label" for="endEmail">응시자에게 결과 공유 (선택)</label>
+        <input type="text" id="endEmail" inputmode="email" autocomplete="off" placeholder="응시자 이메일 (Gmail 권장)">
+        <p class="hint" id="endEcho"></p>
+        <p class="hint">이 주소의 Google 계정으로 로그인하면 질문지와 기록을 볼 수 있습니다. 메일은 가지 않으니 앱 주소는 따로 보내 주세요. 저장 후에는 관리자만 고칠 수 있습니다.</p>
+        <button type="button" class="btn" id="endCopy">앱 주소 복사</button>
+      </div>
+      <p class="hint" id="endHas" hidden></p>
+    </div>
+    <footer><button class="btn" value="no">계속 진행</button><button class="btn primary" value="end">면접 종료</button></footer>
+  </form>
+</dialog>
 <dialog id="iDlg" class="small">
   <div class="dlg">
     <header><h2>면접위원 초대</h2><span class="muted" style="font-size:12px" id="iCount"></span><button class="btn ghost x" data-close>완료</button></header>
@@ -762,6 +788,7 @@ let cur = null;           // 열린 세션 id
 let S = null;             // {session, cards}
 let active = null;        // 측정 중인 카드 id
 let editing = null;       // 질문 글을 고치는 중인 카드 id
+let timeEditing = null;   // 답변 시간을 고치는 중인 카드 id
 let pendingImg = null, replacing = false;
 const imgCache = {};      // 사진 경로 → dataURL
 const VERS = {};          // 응시자 id → [{id,path,since}] (since 오름차순)
@@ -1352,7 +1379,9 @@ function renderCards(){
       <span class="grip" draggable="true" title="끌어서 순서 바꾸기" aria-label="순서 바꾸기">⋮⋮</span>
       <div class="q">${byChip}${head}${qBody}</div>
       <div class="ctrl">
-        ${runner}<button class="time num" data-time data-act="settime" title="눌러서 답변 시간 직접 입력" aria-label="답변 시간 ${fmt(liveT(c))}, 눌러서 수정">${fmt(liveT(c))}</button>
+        ${runner}${timeEditing === c.id
+          ? `<input class="tedit num" data-tedit value="${fmt(liveT(c))}" inputmode="numeric" aria-label="답변 시간 (분:초)" title="Enter 저장 · Esc 취소">`
+          : `<button class="time num" data-time data-act="settime" title="눌러서 답변 시간 직접 입력" aria-label="답변 시간 ${fmt(liveT(c))}, 눌러서 수정">${fmt(liveT(c))}</button>`}
         <button class="ib play" data-act="toggle" aria-label="${run?"일시정지":"재생"}">${run?ICON.pause:ICON.play}</button>
         <button class="ib" data-act="reset" aria-label="초기화">${ICON.reset}</button>
         ${canEdit?`<button class="ib del" data-act="edit" aria-label="질문 수정" title="질문 수정">${ICON.edit}</button>`:""}
@@ -1440,20 +1469,19 @@ $("#cards").addEventListener("click", async e => {
   if (ut) { const c = findCard(ut); c.tags = c.tags.filter(t => t !== ut.dataset.untag); markCard(c); renderCards(); return; }
   const b = e.target.closest("[data-act]"); if (!b) return;
   const c = findCard(b), act = b.dataset.act;
-  if (act === "toggle") { await runTo(active === c.id ? "" : c.id); return; }
+  if (act === "toggle") {
+    const lastStop = active === c.id && c === S.cards[S.cards.length - 1];
+    await runTo(active === c.id ? "" : c.id);
+    if (lastStop && inProgress()) await endWithAsk("마지막 질문이 끝났습니다. 종료하면 총 시간이 멈추고, 응시자에게 질문지와 기록이 열립니다.");
+    return;
+  }
   if (act === "edit") { editing = c.id; renderCards(); const i = document.querySelector(`[data-id="${c.id}"] [data-qedit]`); i?.focus(); i?.select(); return; }
   // 시간을 손대는 동작은 그 카드가 돌고 있으면 먼저 멈춘다 (서버가 경과 초를 더한 뒤에 덮어쓴다)
   if (act === "reset") { if (active === c.id) await runTo(""); c.t = 0; markCard(c, true); clearClockIfEmpty(); }
-  // [▶]를 깜빡했을 때 답변 시간을 손으로 고친다. "2:30" = 2분 30초, 숫자 하나 = 분
+  // [▶]를 깜빡했을 때 답변 시간을 손으로 고친다: 시간 숫자를 누르면 그 자리에서 입력 칸이 된다
   if (act === "settime") {
-    const v = prompt("답변 시간을 분:초로 입력하세요 (예: 2:30)", fmt(liveT(c)));
-    if (v === null) { renderCards(); return; }
-    const p = v.match(/\d+/g);
-    if (!p || p.length > 2) { toast("분:초 형식으로 입력하세요 (예: 2:30)"); return; }
-    const sec = p.length === 2 ? +p[0] * 60 + +p[1] : +p[0] * 60;
-    if (p.length === 2 && +p[1] > 59) { toast("초는 0~59로 입력하세요"); return; }
-    if (active === c.id) await runTo("");
-    c.t = sec; markCard(c, true);
+    timeEditing = c.id; renderCards();
+    const i = document.querySelector(`[data-id="${c.id}"] [data-tedit]`); i?.focus(); i?.select(); return;
   }
   if (act === "del") {
     const used = liveT(c) > 0 || c.myNote || Object.values(c.notes || {}).some(Boolean);
@@ -1481,13 +1509,20 @@ const addTags = (c, raw) => {
   const ts = raw.split(/[,\s]+/).map(t => t.replace(/^#+/, "").trim().slice(0, 30)).filter(Boolean);
   c.tags = [...new Set([...(c.tags || []), ...ts])].slice(0, 10); if (ts.length) markCard(c);
 };
+// 한글은 Enter가 먼저 글자 조합을 끝내는 데 쓰여 keydown에서 놓친다 → 넣기는 keyup에서 (조합이 끝난 뒤라 한 번에 들어간다)
+const tagFocus = c => document.querySelector(`[data-id="${c.id}"] [data-tag]`)?.focus();
 $("#cards").addEventListener("keydown", e => {
   if (!e.target.matches("[data-tag]")) return;
   const el = e.target, c = findCard(el);
-  if ((e.key === "Enter" || e.key === "," || e.key === " ") && !e.isComposing) {
-    e.preventDefault(); if (!el.value.trim()) return;
-    addTags(c, el.value); renderCards(); document.querySelector(`[data-id="${c.id}"] [data-tag]`)?.focus();
-  } else if (e.key === "Backspace" && !el.value && c.tags?.length) { c.tags.pop(); markCard(c); renderCards(); document.querySelector(`[data-id="${c.id}"] [data-tag]`)?.focus(); }
+  if (e.key === "Enter" && !e.isComposing) e.preventDefault();
+  else if (e.key === "Backspace" && !el.value && c.tags?.length) { c.tags.pop(); markCard(c); renderCards(); tagFocus(c); }
+});
+$("#cards").addEventListener("keyup", e => {
+  if (!e.target.matches("[data-tag]") || e.isComposing) return;
+  const el = e.target, c = findCard(el);
+  if (!["Enter", ",", " "].includes(e.key) || !el.value.trim()) return;
+  // 칸을 먼저 비운다: 다시 그릴 때 옛 칸의 focusout이 또 넣고 나중에 다시 그려 포커스를 뺏지 않게
+  const v = el.value; el.value = ""; addTags(c, v); renderCards(); tagFocus(c);
 });
 $("#cards").addEventListener("focusout", e => {
   if (!e.target.matches("[data-tag]") || !e.target.value.trim()) return;
@@ -1498,11 +1533,65 @@ $("#cards").addEventListener("keydown", e => {
   if (e.key === "Enter") { e.preventDefault(); e.target.blur(); }
   if (e.key === "Escape" && editing) { editing = null; renderCards(); }
 });
+// 답변 시간 입력 칸: "2:30" = 2분 30초, 숫자 하나 = 분. Enter·칸 밖 누르면 저장, Esc 취소
+async function commitTime(el){
+  const c = findCard(el); if (!c || timeEditing !== c.id) return;
+  timeEditing = null;
+  const p = el.value.match(/\d+/g);
+  if (!p || p.length > 2) { toast("분:초 형식으로 입력하세요 (예: 2:30)"); renderCards(); return; }
+  if (p.length === 2 && +p[1] > 59) { toast("초는 0~59로 입력하세요"); renderCards(); return; }
+  const sec = p.length === 2 ? +p[0] * 60 + +p[1] : +p[0] * 60;
+  if (sec !== liveT(c)) { if (active === c.id) await runTo(""); c.t = sec; markCard(c, true); }
+  renderCards(); updateTotal();
+}
+$("#cards").addEventListener("keydown", e => {
+  if (!e.target.matches("[data-tedit]")) return;
+  if (e.key === "Enter") { e.preventDefault(); e.target.blur(); }
+  if (e.key === "Escape") { e.preventDefault(); timeEditing = null; renderCards(); }
+});
+$("#cards").addEventListener("focusout", e => { if (e.target.matches("[data-tedit]")) commitTime(e.target); });
 // 면접 종료: 진행 카드 멈춤 + 종료 시각을 서버가 한 번에 (응시자 화면은 이때 질문지가 열린다)
-$("#endBtn").onclick = async () => {
+async function endInterview(){
   if (!inProgress()) return;
   await runTo("", true); updateTotal(); toast(`면접을 종료했습니다 · 총 ${fmt(total())}`);
+}
+// 종료 확인 창: 마지막 카드를 멈출 때와 [면접 종료] 버튼 둘 다. Esc·계속 진행 = 그대로 둠.
+// 응시자 이메일이 비어 있으면 결과 공유용 이메일을 선택으로 받는다 (저장하면 DB 트리거가 가입 초대까지 한다)
+const askEnd = lead => new Promise(res => {
+  const d = $("#endDlg"), c = cand() || {}, has = !!c.email;
+  $("#endLead").textContent = lead;
+  $("#endShare").hidden = has; $("#endHas").hidden = !has;
+  $("#endHas").textContent = has ? `응시자 본인(${c.email})에게 질문지와 기록이 열립니다.` : "";
+  $("#endEmail").value = ""; $("#endEcho").textContent = "";
+  d.returnValue = "";
+  d.addEventListener("close", () => res(d.returnValue === "end" ? {email:has ? "" : $("#endEmail").value.trim().toLowerCase()} : null), {once:true});
+  d.showModal();
+});
+$("#endEmail").addEventListener("input", e => {
+  const v = e.target.value.trim();
+  $("#endEcho").textContent = !v ? "" : EMAIL_RE.test(v) ? `→ ${v.toLowerCase()} 로 결과를 공유합니다` : "이메일 형식을 확인하세요";
+});
+// 입력 칸에서 Enter는 첫 버튼(계속 진행)을 눌러 버리므로 막는다
+$("#endEmail").addEventListener("keydown", e => { if (e.key === "Enter") e.preventDefault(); });
+$("#endDlg form").addEventListener("submit", e => {
+  const v = $("#endEmail").value.trim();
+  if (e.submitter?.value === "end" && !$("#endShare").hidden && v && !EMAIL_RE.test(v)) { e.preventDefault(); toast("이메일 형식을 확인하세요 (비우면 공유 없이 종료)"); }
+});
+$("#endCopy").onclick = async () => {
+  try { await navigator.clipboard.writeText(location.origin + location.pathname); toast("앱 주소를 복사했습니다"); }
+  catch(err){ toast("복사하지 못했습니다: " + location.origin + location.pathname); }
 };
+async function endWithAsk(lead){
+  const r = await askEnd(lead); if (!r) return;
+  const c = cand();
+  await endInterview();
+  if (!r.email || !c) return;
+  try {
+    await call("saveCand", {cand:{id:c.id, name:c.name, email:r.email}});
+    c.email = r.email; if (S) renderCand(); toast(`면접을 종료하고 ${r.email} 로 결과를 공유했습니다`);
+  } catch(err){ toast("면접은 종료했지만 공유 이메일을 저장하지 못했습니다: " + err.message); }
+}
+$("#endBtn").onclick = () => { if (inProgress()) endWithAsk("종료하면 총 시간이 멈추고, 응시자에게 질문지와 기록이 열립니다."); };
 $("#overall").oninput = e => { S.session.overall = e.target.value; grow(e.target); markSess("overall"); };
 // 새 카드는 포부 카드 앞에 넣어 포부가 계속 마지막에 오게 한다
 const addCard = c => { c.by = c.by || DB.me.email; const v = S.cards.findIndex(x => x.preset === "vision"); v < 0 ? S.cards.push(c) : S.cards.splice(v, 0, c); markCard(c); markOrder(); return c; };
